@@ -37,11 +37,6 @@ _FAMILY_CONTRACTS = {
         'sampling_modes': {None, 'torch_sampler', 'cyclic_poisson', 'balls_in_bins'},
         'requires_non_poisson': True,
     },
-    'bnb': {
-        'accountants': {'bnb'},
-        'sampling_modes': {'balls_in_bins'},
-        'requires_non_poisson': True,
-    },
 }
 
 
@@ -124,41 +119,11 @@ def _validate_bnb_contracts(
     bnb_num_samples: int | None,
     bnb_seed: int | None,
 ) -> None:
-    if sampling_mode == 'b_min_sep' and mechanism != 'bnb':
-        raise ValueError('BNB-specific sampling requires --noise-mechanism bnb.')
-
     if sampling_mode == 'b_min_sep':
         raise ValueError(
             'b_min_sep sampling is temporarily disabled pending p-aware BNB accounting. '
             'Use --sampling-mode balls_in_bins.'
         )
-
-    if mechanism != 'bnb':
-        return
-
-    contract = _FAMILY_CONTRACTS['bnb']
-    if accountant not in contract['accountants']:
-        raise ValueError('BNB mechanism requires --accountant bnb.')
-
-    if contract['requires_non_poisson'] and poisson_sampling:
-        raise ValueError(
-            'BNB mechanism requires non-Poisson semantics: set --poisson-sampling False.'
-        )
-
-    if sampling_mode not in contract['sampling_modes']:
-        raise ValueError('BNB mechanism requires --sampling-mode balls_in_bins.')
-
-    if bnb_b is None:
-        raise ValueError('BNB b-min-sep sampling requires --bnb-b.')
-
-    if bnb_bands is None and 'bnb_bands' not in target_hypers:
-        raise ValueError('BNB Toeplitz accounting requires --bnb-bands.')
-
-    if int(bnb_b) < 1:
-        raise ValueError('--bnb-b must be >= 1.')
-
-    if int(bnb_bands) < 1:
-        raise ValueError('--bnb-bands must be >= 1.')
 
     if bnb_num_samples is not None and int(bnb_num_samples) < 1:
         raise ValueError('--bnb-num-samples must be >= 1.')
@@ -203,6 +168,36 @@ def _validate_balls_in_bins_mf_contracts(
         raise ValueError('--bnb-bands must be >= 1.')
 
 
+def _validate_balls_in_bins_gaussian_contract(
+    *,
+    mechanism: str,
+    sampling_mode: str | None,
+    accountant: str,
+    poisson_sampling: bool,
+    bnb_b: int | None,
+    bnb_bands: int | None,
+) -> None:
+    if mechanism != 'gaussian' or sampling_mode != 'balls_in_bins':
+        return
+
+    if accountant != 'bnb':
+        raise ValueError('Gaussian balls_in_bins path requires --accountant bnb.')
+
+    if poisson_sampling:
+        raise ValueError(
+            'Gaussian balls_in_bins path requires non-Poisson semantics: set --poisson-sampling False.'
+        )
+
+    if bnb_b is None:
+        raise ValueError('Gaussian balls_in_bins path requires --bnb-b.')
+
+    if int(bnb_b) < 1:
+        raise ValueError('--bnb-b must be >= 1.')
+
+    if bnb_bands is not None and int(bnb_bands) != 1:
+        raise ValueError('Gaussian balls_in_bins path only supports --bnb-bands 1.')
+
+
 def _validate_privacy_contracts(
     *,
     mechanism: str,
@@ -241,7 +236,7 @@ def _validate_privacy_contracts(
             bsr_iterations_number,
         ]
     )
-    if mechanism not in ('bandmf', 'bsr', 'bisr', 'bandinvmf', 'bnb') and has_any_bsr_field:
+    if mechanism not in ('bandmf', 'bsr', 'bisr', 'bandinvmf') and has_any_bsr_field:
         raise ValueError(
             'BSR/BandMF/BISR/BandInvMF-specific parameters require --noise-mechanism bandmf, bsr, bisr, or bandinvmf.'
         )
@@ -273,8 +268,10 @@ def _validate_privacy_contracts(
             bnb_bands,
         ]
     )
-    if mechanism not in ('bandmf', 'bsr', 'bisr', 'bandinvmf', 'bnb') and has_any_bnb_field:
-        raise ValueError('BNB-specific parameters require --noise-mechanism bnb.')
+    if mechanism not in ('gaussian', 'bandmf', 'bsr', 'bisr', 'bandinvmf') and has_any_bnb_field:
+        raise ValueError(
+            'BNB-specific parameters require --noise-mechanism gaussian, bandmf, bsr, bisr, or bandinvmf.'
+        )
 
     _validate_bnb_contracts(
         mechanism=mechanism,
@@ -296,6 +293,14 @@ def _validate_privacy_contracts(
         bnb_b=bnb_b,
         bnb_bands=bnb_bands,
         bsr_bands=bsr_bands,
+    )
+    _validate_balls_in_bins_gaussian_contract(
+        mechanism=mechanism,
+        sampling_mode=sampling_mode,
+        accountant=accountant,
+        poisson_sampling=poisson_sampling,
+        bnb_b=bnb_b,
+        bnb_bands=bnb_bands,
     )
 
 class Hyperparameters(BaseModel):
@@ -419,7 +424,7 @@ class Configuration(BaseModel):
     accountant: str = 'prv'
     poisson_sampling: bool = True
     normalize_clipping: bool = False
-    noise_mechanism: Literal['gaussian', 'bandmf', 'bsr', 'bisr', 'bandinvmf', 'bnb'] = 'gaussian'
+    noise_mechanism: Literal['gaussian', 'bandmf', 'bsr', 'bisr', 'bandinvmf'] = 'gaussian'
     sampling_mode: Optional[Literal['torch_sampler', 'cyclic_poisson', 'b_min_sep', 'balls_in_bins']] = None
     bsr_coeffs: Optional[List[float]] = None
     bsr_bands: Optional[int] = None
@@ -484,6 +489,14 @@ class Configuration(BaseModel):
     load_in_4bit: bool = False
 
     model_config = ConfigDict(protected_namespaces=())
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_empty_bsr_coeffs(cls, values):
+        coeffs = values.get('bsr_coeffs')
+        if isinstance(coeffs, (list, tuple)) and len(coeffs) == 0:
+            values['bsr_coeffs'] = None
+        return values
 
     @model_validator(mode="before")
     @classmethod
@@ -568,7 +581,7 @@ class Configuration(BaseModel):
             and use_steps
             and not poisson_sampling
             and sampling_mode == 'torch_sampler'
-            and mechanism not in ('bandmf', 'bsr', 'bisr', 'bandinvmf', 'bnb')
+            and mechanism not in ('bandmf', 'bsr', 'bisr', 'bandinvmf')
         ):
             raise ValueError(
                 'Setting total_steps with non-Poisson sampling requires '
@@ -610,10 +623,10 @@ class Configuration(BaseModel):
         mechanism = self.noise_mechanism
         accountant = self.accountant
 
-        if mechanism == 'gaussian' and accountant in ('bsr', 'bnb'):
+        if mechanism == 'gaussian' and accountant == 'bsr':
             raise ValueError(
                 'Gaussian mechanism does not support mechanism-specific accountants; '
-                'use --accountant prv/rdp/gdp.'
+                'use --accountant prv/rdp/gdp, or use a supported runtime mechanism with --accountant bnb and --sampling-mode balls_in_bins.'
             )
 
         return self

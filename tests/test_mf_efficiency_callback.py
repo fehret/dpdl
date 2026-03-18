@@ -133,7 +133,7 @@ def test_mf_efficiency_callback_bnb_uses_c_matrix_horizon_when_aligned(tmp_path)
     callback._is_global_zero = lambda: True
     trainer = _trainer(
         total_steps=5,  # training horizon
-        mechanism="bnb",
+        mechanism="gaussian",
         sampling_mode="balls_in_bins",
         mechanism_state={"bnb_c_matrix": torch.eye(6).tolist(), "bnb_bands": 3},
         sigma=1.0,
@@ -144,10 +144,10 @@ def test_mf_efficiency_callback_bnb_uses_c_matrix_horizon_when_aligned(tmp_path)
     assert summary is not None
     assert summary["mf_efficiency_status"] == "computed"
     assert summary["horizon_training"] == 5
-    assert summary["horizon"] == 6
-    # For n=6 and C=I, ||A||_F^2 = 1+2+...+6 = 21.
-    assert summary["mse_prefix"] == 21.0
-    assert summary["rmse_prefix"] == math.sqrt(21.0)
+    assert summary["horizon"] == 5
+    # For n=5 and C=I, ||A||_F^2 = 1+2+...+5 = 15.
+    assert summary["mse_prefix"] == 15.0
+    assert summary["rmse_prefix"] == math.sqrt(15.0)
 
 
 def test_mf_efficiency_callback_invalid_z_std_does_not_fallback_to_optimizer(tmp_path):

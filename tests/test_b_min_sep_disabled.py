@@ -16,11 +16,10 @@ def test_b_min_sep_sampling_mode_is_disabled() -> None:
     ):
         Configuration(
             command="train",
-            noise_mechanism="bnb",
+            noise_mechanism="gaussian",
             accountant="bnb",
             poisson_sampling=False,
             sampling_mode="b_min_sep",
             bnb_b=2,
             bnb_p=0.2,
-            bnb_bands=2,
         )

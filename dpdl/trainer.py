@@ -12,7 +12,6 @@ import opacus
 import torch
 from opacus import GradSampleModule
 from opacus.accountants.analysis.bnb import (
-    build_bnb_toeplitz_c_matrix_and_contract,
     resolve_bnb_calibration_kwargs,
 )
 from opacus.accountants.analysis.bsr import calibrate_bsr_z_std
@@ -778,9 +777,8 @@ class DifferentiallyPrivateTrainer(Trainer):
                 if self.bnb_b is not None:
                     privacy_metadata['bins'] = int(self.bnb_b)
 
-                if self.noise_mechanism == 'bnb':
-                    if self.bnb_bands is not None:
-                        privacy_metadata['bands'] = int(self.bnb_bands)
+                if self.noise_mechanism == 'gaussian':
+                    privacy_metadata['bands'] = 1
                 else:
                     bands = self.bsr_bands if self.bsr_bands is not None else self.bnb_bands
                     if bands is not None:
@@ -815,7 +813,7 @@ class DifferentiallyPrivateTrainer(Trainer):
             σ path (explicit z_std or calibrated z_std = noise_multiplier_ref*max_grad_norm/denominator).
             Mapping: mechanism_state keys mirror Opacus runtime/accounting fields.
             """
-            if self.noise_mechanism not in ('bandmf', 'bsr', 'bisr', 'bandinvmf', 'bnb'):
+            if self.noise_mechanism not in ('gaussian', 'bandmf', 'bsr', 'bisr', 'bandinvmf'):
                 return None
 
             # `coeffs` encode Toeplitz factor coefficients; `z_std` is correlated Gaussian stddev.
@@ -828,8 +826,8 @@ class DifferentiallyPrivateTrainer(Trainer):
 
             if self.accountant == 'bnb':
                 bands_for_bnb = (
-                    int(self.bnb_bands)
-                    if self.noise_mechanism == 'bnb' and self.bnb_bands is not None
+                    1
+                    if self.noise_mechanism == 'gaussian'
                     else (
                         int(self.bsr_bands)
                         if self.bsr_bands is not None
@@ -842,15 +840,13 @@ class DifferentiallyPrivateTrainer(Trainer):
                 )
                 if bands_for_bnb is not None:
                     mechanism_state['bnb_bands'] = bands_for_bnb
-
-                if bnb_horizon is not None and bands_for_bnb is not None:
-                    c_matrix, c_matrix_contract = build_bnb_toeplitz_c_matrix_and_contract(
-                        coeffs=mechanism_state.get('coeffs', []),
-                        bands=int(bands_for_bnb),
-                        horizon=int(bnb_horizon),
-                    )
-                    mechanism_state['bnb_c_matrix'] = c_matrix
-                    mechanism_state['bnb_c_matrix_contract'] = c_matrix_contract
+                if self.bnb_b is not None:
+                    mechanism_state['bnb_cycle_length'] = int(self.bnb_b)
+                    mechanism_state['bnb_bins'] = int(self.bnb_b)
+                if bnb_horizon is not None:
+                    mechanism_state['bnb_horizon'] = int(bnb_horizon)
+                if self.noise_mechanism == 'gaussian':
+                    mechanism_state.setdefault('coeffs', [1.0])
 
             if self.bsr_max_participations is not None:
                 mechanism_state['bsr_max_participations'] = int(self.bsr_max_participations)
@@ -887,6 +883,13 @@ class DifferentiallyPrivateTrainer(Trainer):
                     sensitivity_scale=mechanism_state.get('bsr_sensitivity_scale'),
                 )
 
+            if self.noise_mechanism == 'gaussian' and self.accountant == 'bnb':
+                return NoiseMechanismConfig(
+                    mechanism='gaussian',
+                    accounting_mode=resolve_accounting_mode_from_accountant(self.accountant),
+                    mechanism_state=mechanism_state,
+                )
+
             if self.noise_mechanism in ('bandmf', 'bsr', 'bisr', 'bandinvmf'):
                 return NoiseMechanismConfig(
                     mechanism=self.noise_mechanism,
@@ -894,10 +897,8 @@ class DifferentiallyPrivateTrainer(Trainer):
                     mechanism_state=mechanism_state,
                 )
 
-            return NoiseMechanismConfig(
-                mechanism='bnb',
-                accounting_mode=resolve_accounting_mode_from_accountant(self.accountant),
-                mechanism_state=mechanism_state,
+            raise ValueError(
+                f'unsupported runtime noise mechanism for DPDL handoff: {self.noise_mechanism!r}'
             )
 
         has_target_privacy_params = self._has_target_privacy_params()
@@ -906,7 +907,7 @@ class DifferentiallyPrivateTrainer(Trainer):
 
         train_dataloader = self.datamodule.get_dataloader('train')
 
-        if self.noise_mechanism in ('bandmf', 'bsr', 'bisr', 'bandinvmf', 'bnb'):
+        if self.noise_mechanism in ('bandmf', 'bsr', 'bisr', 'bandinvmf'):
             self._validate_cyclic_steps_vs_bands(
                 mechanism=self.noise_mechanism,
                 sampling_mode=self.sampling_mode,
@@ -947,34 +948,20 @@ class DifferentiallyPrivateTrainer(Trainer):
                 raise ValueError('BNB Toeplitz horizon must be >= 1.')
 
             bands = (
-                int(self.bnb_bands)
-                if self.noise_mechanism == 'bnb' and self.bnb_bands is not None
+                int(self.bsr_bands)
+                if self.bsr_bands is not None
                 else (
-                    int(self.bsr_bands)
-                    if self.bsr_bands is not None
-                    else (
-                        int(self.bnb_bands)
-                        if self.bnb_bands is not None
-                        else None
-                    )
+                    int(self.bnb_bands)
+                    if self.bnb_bands is not None
+                    else None
                 )
             )
             if bnb_horizon is not None and bands is not None:
                 if bands < 1:
                     raise ValueError('BNB bands must be >= 1.')
 
-                if bnb_horizon % bands != 0:
-                    aligned_horizon = int(math.ceil(bnb_horizon / bands) * bands)
-                    if torch.distributed.get_rank() == 0:
-                        log.info(
-                            'Aligning BNB Toeplitz horizon to a multiple of bands '
-                            f'for Monte Carlo accounting: horizon={bnb_horizon}, '
-                            f'bands={bands}, aligned_horizon={aligned_horizon}.'
-                        )
-                    bnb_horizon = aligned_horizon
-
         correlated_denominator = None
-        if self.noise_mechanism in ('bandmf', 'bsr', 'bisr', 'bandinvmf', 'bnb') and not has_target_privacy_params:
+        if self.noise_mechanism in ('bandmf', 'bsr', 'bisr', 'bandinvmf') and not has_target_privacy_params:
             expected_batch_size = self._resolve_expected_batch_size_for_correlated_runtime(
                 total_steps=self.total_steps,
                 poisson_sampling=self.poisson_sampling,
@@ -1011,7 +998,7 @@ class DifferentiallyPrivateTrainer(Trainer):
         if self.bnb_bands is not None:
             mechanism_kwargs['bnb_bands'] = int(self.bnb_bands)
 
-        if self.noise_mechanism == 'bnb' and has_target_privacy_params:
+        if self.accountant == 'bnb' and has_target_privacy_params:
             mechanism_kwargs.update(
                 resolve_bnb_calibration_kwargs(
                     overrides={

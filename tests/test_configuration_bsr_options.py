@@ -198,6 +198,20 @@ def test_bsr_valid_balls_in_bins_minimal() -> None:
     assert cfg.sampling_mode == 'balls_in_bins'
 
 
+def test_empty_bsr_coeff_list_normalizes_to_none() -> None:
+    cfg = Configuration(
+        command='train',
+        noise_mechanism='bsr',
+        accountant='bnb',
+        poisson_sampling=False,
+        sampling_mode='balls_in_bins',
+        bnb_b=4,
+        bsr_bands=2,
+        bsr_coeffs=[],
+    )
+    assert cfg.bsr_coeffs is None
+
+
 def test_bisr_valid_balls_in_bins_minimal() -> None:
     cfg = Configuration(
         command='train',
@@ -240,44 +254,40 @@ def test_balls_in_bins_mf_rejects_missing_bnb_b() -> None:
         )
 
 
-def test_bnb_valid_balls_in_bins_with_alias() -> None:
+def test_gaussian_bnb_valid_balls_in_bins_with_alias() -> None:
     cfg = Configuration(
         command='train',
-        noise_mechanism='bnb',
+        noise_mechanism='gaussian',
         accountant='bnb',
         poisson_sampling=False,
         sampling_mode='balls_n_bins',
         bnb_b=4,
-        bnb_bands=2,
     )
     assert cfg.sampling_mode == 'balls_in_bins'
-    assert cfg.bnb_bands == 2
 
 
-def test_bnb_rejects_b_min_sep() -> None:
+def test_gaussian_bnb_rejects_b_min_sep() -> None:
     with pytest.raises(ValidationError, match='temporarily disabled'):
         Configuration(
             command='train',
-            noise_mechanism='bnb',
+            noise_mechanism='gaussian',
             accountant='bnb',
             poisson_sampling=False,
             sampling_mode='b_min_sep',
             bnb_b=4,
-            bnb_bands=2,
         )
 
 
-def test_bnb_rejects_torch_sampler() -> None:
-    with pytest.raises(ValidationError, match='requires --sampling-mode balls_in_bins'):
-        Configuration(
-            command='train',
-            noise_mechanism='bnb',
-            accountant='bnb',
-            poisson_sampling=False,
-            sampling_mode='torch_sampler',
-            bnb_b=4,
-            bnb_bands=2,
-        )
+def test_gaussian_bnb_accepts_torch_sampler_configuration() -> None:
+    cfg = Configuration(
+        command='train',
+        noise_mechanism='gaussian',
+        accountant='bnb',
+        poisson_sampling=False,
+        sampling_mode='torch_sampler',
+    )
+    assert cfg.noise_mechanism == 'gaussian'
+    assert cfg.accountant == 'bnb'
 
 
 def test_paper_sgd_requires_optimizer_momentum_and_weight_decay() -> None:
@@ -318,10 +328,22 @@ def test_paper_sgd_accepts_matching_configuration() -> None:
     assert cfg.optimizer_momentum == pytest.approx(0.95)
 
 
-def test_gaussian_rejects_mechanism_specific_accountants() -> None:
+def test_gaussian_rejects_bsr_accountant() -> None:
     with pytest.raises(ValidationError, match='Gaussian mechanism does not support mechanism-specific accountants'):
         Configuration(
             command='train',
             noise_mechanism='gaussian',
-            accountant='bnb',
+            accountant='bsr',
         )
+
+
+def test_gaussian_accepts_bnb_balls_in_bins_contract() -> None:
+    cfg = Configuration(
+        command='train',
+        noise_mechanism='gaussian',
+        accountant='bnb',
+        sampling_mode='balls_in_bins',
+        poisson_sampling=False,
+        bnb_b=8,
+    )
+    assert cfg.accountant == 'bnb'
