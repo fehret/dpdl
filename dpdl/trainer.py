@@ -816,6 +816,9 @@ class DifferentiallyPrivateTrainer(Trainer):
             if self.noise_mechanism not in ('gaussian', 'bandmf', 'bsr', 'bisr', 'bandinvmf'):
                 return None
 
+            if self.noise_mechanism == 'gaussian' and self.accountant != 'bnb':
+                return None
+
             # `coeffs` encode Toeplitz factor coefficients; `z_std` is correlated Gaussian stddev.
             mechanism_state = {}
             if self.bsr_coeffs:
@@ -861,7 +864,7 @@ class DifferentiallyPrivateTrainer(Trainer):
                 mechanism_state['bsr_iterations_number'] = int(self.bsr_iterations_number)
 
             # make_private_with_epsilon calibrates and sets z_std itself.
-            if not self._has_target_privacy_params():
+            if self.noise_mechanism != 'gaussian' and not self._has_target_privacy_params():
                 if self.bsr_z_std is not None:
                     mechanism_state['z_std'] = float(self.bsr_z_std)
                 else:

@@ -35,7 +35,7 @@ def _run_launcher(*, methods: str, regimes: str, include_controls: str = "0") ->
 def test_amplified_gaussian_launcher_row_uses_bnb_balls_in_bins_contract() -> None:
     stdout = _run_launcher(methods="dpsgd", regimes="amplified")
 
-    assert "Row amplified/dpsgd" in stdout
+    assert "Submitting amplified/dpsgd" in stdout
     assert "--noise-mechanism gaussian" in stdout
     assert "--accountant bnb" in stdout
     assert "--sampling-mode balls_in_bins" in stdout
@@ -43,10 +43,11 @@ def test_amplified_gaussian_launcher_row_uses_bnb_balls_in_bins_contract() -> No
     assert "--accountant bsr" not in stdout
 
 
-def test_bandinvmf_rows_are_skipped_as_known_blocked() -> None:
+def test_bandinvmf_rows_emit_live_commands() -> None:
     stdout = _run_launcher(methods="bandinvmf", regimes="amplified nonamplified")
 
-    assert "Skipping blocked row amplified/bandinvmf" in stdout
-    assert "Skipping blocked row nonamplified/bandinvmf" in stdout
-    assert "known optimizer instability: current coefficient path can produce non-finite values" in stdout
-    assert "run.py train" not in stdout
+    assert "Submitting amplified/bandinvmf" in stdout
+    assert "Submitting nonamplified/bandinvmf" in stdout
+    assert "--noise-mechanism bandinvmf" in stdout
+    assert "--accountant bnb" in stdout
+    assert "--accountant bsr" in stdout
