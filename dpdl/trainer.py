@@ -1003,7 +1003,7 @@ class DifferentiallyPrivateTrainer(Trainer):
         if self.bnb_bands is not None:
             mechanism_kwargs['bnb_bands'] = int(self.bnb_bands)
 
-        if self.accountant == 'bnb' and has_target_privacy_params:
+        if self.accountant == 'bnb':
             mechanism_kwargs.update(
                 resolve_bnb_calibration_kwargs(
                     overrides={
