@@ -12,11 +12,10 @@ Many of the ideas that we are using come from [fastai](https://github.com/fastai
 
 ### Install dependencies
 
-`pip install torch timm datasets typer[all] optuna optuna-integration botorch torchmetrics pydantic peft`
-
-We also need to install our own fork of Opacus, as we have some modifications there
-
-`pip install -e git+https://github.com/DPBayes/opacus#egg=opacus`
+```bash
+pip install torch timm datasets "typer[all]" optuna optuna-integration botorch torchmetrics pydantic peft
+pip install -e "git+https://github.com/DPBayes/opacus.git@adaptive_optimizer#egg=opacus"
+```
 
 ### Command line usage
 
