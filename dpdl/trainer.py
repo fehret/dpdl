@@ -1,5 +1,20 @@
 from __future__ import annotations
 
+"""
+DPDL training loop and Opacus privacy wiring.
+
+This module is where DPDL passes paper-shaped MF quantities into Opacus:
+- family choice (`noise_mechanism`)
+- accountant choice (`accountant`)
+- sampler semantics (`sampling_mode`, `poisson_sampling`)
+- finite-horizon and fixed-batch quantities such as `bands`, `k`, `b`, and
+  explicit sensitivity overrides when present
+
+The implementation here is runtime plumbing, not a theorem layer. Documentation
+should therefore describe the contract with Opacus rather than restating paper
+claims as if they were proved by the trainer itself.
+"""
+
 import logging
 import math
 import os
@@ -21,6 +36,7 @@ from opacus.mechanism_contracts import (
     SamplingSemantics,
     resolve_accounting_mode_from_accountant,
 )
+from opacus.mf.blt_family import resolve_blt_workload_mechanism_state
 from opacus.utils.batch_memory_manager import BatchMemoryManager
 
 from peft import PeftModel
@@ -450,7 +466,7 @@ class DifferentiallyPrivateTrainer(Trainer):
         correlated_denominator: float | None,
         mechanism_kwargs: dict,
     ) -> None:
-        if noise_mechanism_config is None or noise_mechanism_config.mechanism not in ('bandmf', 'bsr', 'bisr', 'bandinvmf'):
+        if noise_mechanism_config is None or noise_mechanism_config.mechanism not in ('bandmf', 'bsr', 'bisr', 'bandinvmf', 'bifr'):
             return
 
         state = noise_mechanism_config.mechanism_state
@@ -477,6 +493,7 @@ class DifferentiallyPrivateTrainer(Trainer):
                 'bsr_mf_sensitivity': state.get('bsr_mf_sensitivity'),
                 'bsr_bands': state.get('bsr_bands'),
                 'bnb_bands': state.get('bnb_bands'),
+                'bifr_frac': state.get('bifr_frac'),
             },
         }
         log.info('BSR_TRACE %s', json.dumps(payload, sort_keys=True))
@@ -566,6 +583,8 @@ class DifferentiallyPrivateTrainer(Trainer):
         bsr_min_separation: int | None = None,
         bsr_mf_sensitivity: float | None = None,
         bsr_iterations_number: int | None = None,
+        bifr_frac: float | None = None,
+        blt_rank: int | None = None,
         bnb_b: int | None = None,
         bnb_p: float | None = None,
         bnb_bands: int | None = None,
@@ -604,6 +623,8 @@ class DifferentiallyPrivateTrainer(Trainer):
         self.bsr_min_separation = bsr_min_separation
         self.bsr_mf_sensitivity = bsr_mf_sensitivity
         self.bsr_iterations_number = bsr_iterations_number
+        self.bifr_frac = bifr_frac
+        self.blt_rank = blt_rank
         self.bnb_b = bnb_b
         self.bnb_p = bnb_p
         self.bnb_bands = bnb_bands
@@ -694,6 +715,77 @@ class DifferentiallyPrivateTrainer(Trainer):
                 raise ValueError('Correlated noise sensitivity_scale must be finite and > 0.')
 
     @staticmethod
+    def _resolve_bnb_structured_b(
+        *,
+        sampling_mode: str | None,
+        bnb_b: int | None,
+        bsr_bands: int | None = None,
+        bnb_bands: int | None = None,
+        dataloader_len: int | None = None,
+    ) -> int | None:
+        """
+        Resolve the structured sampling integer shared across BNB routes.
+        Math: `balls_in_bins` uses bins = batches/epoch; `b_min_sep` uses min-separation `b`.
+        Mapping: DPDL keeps one field `bnb_b`, but may derive it from bands or steps/epoch.
+        """
+        if bnb_b is not None:
+            return int(bnb_b)
+
+        if sampling_mode == 'b_min_sep':
+            derived = bsr_bands if bsr_bands is not None else bnb_bands
+            return int(derived) if derived is not None else None
+
+        if sampling_mode == 'balls_in_bins' and dataloader_len is not None:
+            if int(dataloader_len) < 1:
+                raise ValueError('balls_in_bins requires dataloader_len >= 1 to derive bins.')
+            return int(dataloader_len)
+
+        return None
+
+    @staticmethod
+    def _resolve_b_min_sep_average_participation_rate(
+        *,
+        p: float,
+        b: int,
+    ) -> float:
+        """
+        Resolve the unconditional per-step participation rate for `b_min_sep`.
+        Math: `p0 = p / (1 + p (b - 1))`, where `p` is the eligibility Bernoulli parameter.
+        Mapping: sampler metadata stores `p`; runtime expected batch size uses `p0`.
+        """
+        return float(p) / (1.0 + float(p) * float(int(b) - 1))
+
+    @staticmethod
+    def _resolve_b_min_sep_sampling_probability(
+        *,
+        bnb_p: float | None,
+        bnb_b: int | None,
+        batch_size: int,
+        dataset_size: int,
+    ) -> float:
+        """
+        Resolve the `b_min_sep` eligibility probability from paper-shaped inputs.
+        Math: if the target average participation rate is `p0 = B / N`, then
+        `p = p0 / (1 - p0 (b - 1))`.
+        Mapping: `B=batch_size`, `N=dataset_size`, `b=bnb_b`, `p=bnb_p`.
+        """
+        if bnb_b is None:
+            raise ValueError('b_min_sep sampling requires a resolved min-separation parameter b.')
+
+        if bnb_p is not None:
+            return float(bnb_p)
+
+        p0 = float(batch_size) / float(dataset_size)
+        p = p0 / (1.0 - p0 * float(int(bnb_b) - 1))
+        if (not math.isfinite(p)) or p <= 0.0 or p > 1.0 + 1e-12:
+            raise ValueError(
+                'b_min_sep default probability requires batch_size / dataset_size <= 1 / b; '
+                f'got batch_size={int(batch_size)}, dataset_size={int(dataset_size)}, b={int(bnb_b)}'
+            )
+
+        return min(float(p), 1.0)
+
+    @staticmethod
     def _resolve_expected_batch_size_for_correlated_runtime(
         *,
         total_steps: int | None,
@@ -705,25 +797,53 @@ class DifferentiallyPrivateTrainer(Trainer):
         bnb_p: float | None,
         bnb_b: int | None,
         bsr_bands: int | None = None,
+        bnb_bands: int | None = None,
     ) -> int:
         """
         Resolve expected batch size used in correlated-noise calibration plumbing.
         Math: expected_batch_size = N*q where q is derived from sampler law:
-        b-min-sep q=p, balls-in-bins q=1/b, cyclic q=batch_size/(floor(N/bands)*bands).
-        Mapping: N=dataset_size, b=bnb_b or bsr_bands, T=total_steps.
+        b-min-sep q=p/(1+p(b-1)), balls-in-bins q=1/b, cyclic q=batch_size/(floor(N/bands)*bands).
+        Mapping: N=dataset_size, b=structured sampling integer, T=total_steps.
         """
         if total_steps:
             # `total_steps` is horizon `T`; branch-specific sample_rate is derived from sampler semantics.
             if not poisson_sampling and sampling_mode == 'b_min_sep':
+                resolved_bnb_b = DifferentiallyPrivateTrainer._resolve_bnb_structured_b(
+                    sampling_mode=sampling_mode,
+                    bnb_b=bnb_b,
+                    bsr_bands=bsr_bands,
+                    bnb_bands=bnb_bands,
+                    dataloader_len=dataloader_len,
+                )
+                if resolved_bnb_b is None:
+                    raise ValueError(
+                        'b_min_sep sampling requires bnb_b or a derivable band parameter to '
+                        'resolve expected batch size.'
+                    )
+
                 if bnb_p is None:
-                    raise ValueError('b_min_sep sampling requires bnb_p to resolve expected batch size.')
-
-                sample_rate = float(bnb_p)
+                    DifferentiallyPrivateTrainer._resolve_b_min_sep_sampling_probability(
+                        bnb_p=None,
+                        bnb_b=resolved_bnb_b,
+                        batch_size=batch_size,
+                        dataset_size=dataset_size,
+                    )
+                    sample_rate = float(batch_size) / float(dataset_size)
+                else:
+                    sample_rate = DifferentiallyPrivateTrainer._resolve_b_min_sep_average_participation_rate(
+                        p=float(bnb_p),
+                        b=int(resolved_bnb_b),
+                    )
             elif not poisson_sampling and sampling_mode == 'balls_in_bins':
-                if bnb_b is None:
-                    raise ValueError('balls_in_bins sampling requires bnb_b to resolve expected batch size.')
+                resolved_bnb_b = DifferentiallyPrivateTrainer._resolve_bnb_structured_b(
+                    sampling_mode=sampling_mode,
+                    bnb_b=bnb_b,
+                    dataloader_len=dataloader_len,
+                )
+                if resolved_bnb_b is None:
+                    raise ValueError('balls_in_bins sampling requires bins to resolve expected batch size.')
 
-                sample_rate = 1.0 / float(int(bnb_b))
+                sample_rate = 1.0 / float(int(resolved_bnb_b))
             elif not poisson_sampling and sampling_mode == 'cyclic_poisson':
                 if bsr_bands is None:
                     raise ValueError('cyclic_poisson sampling requires bsr_bands to resolve expected batch size.')
@@ -768,23 +888,28 @@ class DifferentiallyPrivateTrainer(Trainer):
                 privacy_metadata['bands'] = int(self.bsr_bands)
 
             if self.sampling_mode == 'b_min_sep':
-                if self.bnb_b is not None:
-                    privacy_metadata['b'] = int(self.bnb_b)
+                if resolved_bnb_b is not None:
+                    privacy_metadata['b'] = int(resolved_bnb_b)
 
-                if self.bnb_p is not None:
-                    privacy_metadata['p'] = float(self.bnb_p)
+                if resolved_b_min_sep_p is not None:
+                    privacy_metadata['p'] = float(resolved_b_min_sep_p)
 
-                if self.bnb_bands is not None:
-                    privacy_metadata['bands'] = int(self.bnb_bands)
+                bands = self.bsr_bands if self.bsr_bands is not None else self.bnb_bands
+                if bands is None and self.noise_mechanism == 'blt':
+                    bands = resolved_bnb_b
+                if bands is not None:
+                    privacy_metadata['bands'] = int(bands)
 
             if self.sampling_mode == 'balls_in_bins':
-                if self.bnb_b is not None:
-                    privacy_metadata['bins'] = int(self.bnb_b)
+                if resolved_bnb_b is not None:
+                    privacy_metadata['bins'] = int(resolved_bnb_b)
 
                 if self.noise_mechanism == 'gaussian':
                     privacy_metadata['bands'] = 1
                 else:
                     bands = self.bsr_bands if self.bsr_bands is not None else self.bnb_bands
+                    if bands is None and self.noise_mechanism == 'blt':
+                        bands = resolved_bnb_b
                     if bands is not None:
                         privacy_metadata['bands'] = int(bands)
 
@@ -817,7 +942,7 @@ class DifferentiallyPrivateTrainer(Trainer):
             σ path (explicit z_std or calibrated z_std = noise_multiplier_ref*max_grad_norm/denominator).
             Mapping: mechanism_state keys mirror Opacus runtime/accounting fields.
             """
-            if self.noise_mechanism not in ('gaussian', 'bandmf', 'bsr', 'bisr', 'bandinvmf'):
+            if self.noise_mechanism not in ('gaussian', 'bandmf', 'bsr', 'bisr', 'bandinvmf', 'bifr', 'blt'):
                 return None
 
             if self.noise_mechanism == 'gaussian' and self.accountant != 'bnb':
@@ -828,32 +953,58 @@ class DifferentiallyPrivateTrainer(Trainer):
             if self.bsr_coeffs:
                 mechanism_state['coeffs'] = list(self.bsr_coeffs)
 
-            if self.noise_mechanism in ('bandmf', 'bsr', 'bisr', 'bandinvmf') and self.bsr_bands is not None:
+            if self.noise_mechanism in ('bandmf', 'bsr', 'bisr', 'bandinvmf', 'bifr') and self.bsr_bands is not None:
                 mechanism_state['bsr_bands'] = int(self.bsr_bands)
+            if self.noise_mechanism == 'bifr' and self.bifr_frac is not None:
+                mechanism_state['bifr_frac'] = float(self.bifr_frac)
+            if self.noise_mechanism == 'blt':
+                blt_total_steps = int(self.total_steps) if self.total_steps else int(self.epochs) * int(len(train_dataloader))
+                mechanism_state = resolve_blt_workload_mechanism_state(
+                    total_steps=blt_total_steps,
+                    dataset_size=int(len(train_dataloader.dataset)),
+                    logical_batch_size=int(self.datamodule.batch_size),
+                    max_grad_norm=float(self.max_grad_norm),
+                    loss_reduction=str(getattr(self.model.criterion, 'reduction', 'mean')),
+                    sampling_semantics=sampling_semantics,
+                    rank=self.blt_rank,
+                    target_epsilon=float(self.target_epsilon) if has_target_privacy_params else None,
+                    target_delta=float(self.target_delta) if has_target_privacy_params else None,
+                    noise_multiplier_ref=(
+                        float(noise_multiplier_ref)
+                        if (noise_multiplier_ref is not None and not has_target_privacy_params)
+                        else None
+                    ),
+                )
 
             if self.accountant == 'bnb':
                 bands_for_bnb = (
                     1
                     if self.noise_mechanism == 'gaussian'
                     else (
-                        int(self.bsr_bands)
-                        if self.bsr_bands is not None
+                        int(mechanism_state.get('bnb_bands', mechanism_state.get('blt_min_separation')))
+                        if self.noise_mechanism == 'blt'
                         else (
-                            int(self.bnb_bands)
-                            if self.bnb_bands is not None
-                            else None
+                            int(self.bsr_bands)
+                            if self.bsr_bands is not None
+                            else (
+                                int(self.bnb_bands)
+                                if self.bnb_bands is not None
+                                else None
+                            )
                         )
                     )
                 )
                 if bands_for_bnb is not None:
                     mechanism_state['bnb_bands'] = bands_for_bnb
-                if self.bnb_b is not None:
-                    mechanism_state['bnb_cycle_length'] = int(self.bnb_b)
-                    mechanism_state['bnb_bins'] = int(self.bnb_b)
+                if resolved_bnb_b is not None:
+                    mechanism_state['bnb_cycle_length'] = int(resolved_bnb_b)
+                    mechanism_state['bnb_bins'] = int(resolved_bnb_b)
                 if bnb_horizon is not None:
                     mechanism_state['bnb_horizon'] = int(bnb_horizon)
                 if self.noise_mechanism == 'gaussian':
                     mechanism_state.setdefault('coeffs', [1.0])
+                if self.noise_mechanism == 'blt' and resolved_b_min_sep_p is not None:
+                    mechanism_state['bnb_p'] = float(resolved_b_min_sep_p)
 
             if self.bsr_max_participations is not None:
                 mechanism_state['bsr_max_participations'] = int(self.bsr_max_participations)
@@ -868,7 +1019,7 @@ class DifferentiallyPrivateTrainer(Trainer):
                 mechanism_state['bsr_iterations_number'] = int(self.bsr_iterations_number)
 
             # make_private_with_epsilon calibrates and sets z_std itself.
-            if self.noise_mechanism != 'gaussian' and not self._has_target_privacy_params():
+            if self.noise_mechanism not in ('gaussian', 'blt') and not self._has_target_privacy_params():
                 if self.bsr_z_std is not None:
                     mechanism_state['z_std'] = float(self.bsr_z_std)
                 else:
@@ -897,7 +1048,7 @@ class DifferentiallyPrivateTrainer(Trainer):
                     mechanism_state=mechanism_state,
                 )
 
-            if self.noise_mechanism in ('bandmf', 'bsr', 'bisr', 'bandinvmf'):
+            if self.noise_mechanism in ('bandmf', 'bsr', 'bisr', 'bandinvmf', 'bifr', 'blt'):
                 return NoiseMechanismConfig(
                     mechanism=self.noise_mechanism,
                     accounting_mode=resolve_accounting_mode_from_accountant(self.accountant),
@@ -908,13 +1059,28 @@ class DifferentiallyPrivateTrainer(Trainer):
                 f'unsupported runtime noise mechanism for DPDL handoff: {self.noise_mechanism!r}'
             )
 
+        train_dataloader = self.datamodule.get_dataloader('train')
+        resolved_bnb_b = self._resolve_bnb_structured_b(
+            sampling_mode=self.sampling_mode,
+            bnb_b=self.bnb_b,
+            bsr_bands=self.bsr_bands,
+            bnb_bands=self.bnb_bands,
+            dataloader_len=len(train_dataloader),
+        )
+        resolved_b_min_sep_p = None
+        if self.sampling_mode == 'b_min_sep' and resolved_bnb_b is not None:
+            resolved_b_min_sep_p = self._resolve_b_min_sep_sampling_probability(
+                bnb_p=self.bnb_p,
+                bnb_b=resolved_bnb_b,
+                batch_size=int(self.datamodule.batch_size),
+                dataset_size=len(train_dataloader.dataset),
+            )
+
         has_target_privacy_params = self._has_target_privacy_params()
         dp_setup_t0 = time.perf_counter()
         sampling_semantics = _build_sampling_semantics()
 
-        train_dataloader = self.datamodule.get_dataloader('train')
-
-        if self.noise_mechanism in ('bandmf', 'bsr', 'bisr', 'bandinvmf'):
+        if self.noise_mechanism in ('bandmf', 'bsr', 'bisr', 'bandinvmf', 'bifr'):
             self._validate_cyclic_steps_vs_bands(
                 mechanism=self.noise_mechanism,
                 sampling_mode=self.sampling_mode,
@@ -927,7 +1093,7 @@ class DifferentiallyPrivateTrainer(Trainer):
             if self.bsr_coeffs and torch.distributed.get_rank == 0:
                 auto_bands = (
                     self.bsr_bands
-                    if self.noise_mechanism in ('bandmf', 'bsr', 'bisr', 'bandinvmf')
+                    if self.noise_mechanism in ('bandmf', 'bsr', 'bisr', 'bandinvmf', 'bifr')
                     else self.bnb_bands
                 )
                 log.info(
@@ -968,7 +1134,7 @@ class DifferentiallyPrivateTrainer(Trainer):
                     raise ValueError('BNB bands must be >= 1.')
 
         correlated_denominator = None
-        if self.noise_mechanism in ('bandmf', 'bsr', 'bisr', 'bandinvmf') and not has_target_privacy_params:
+        if self.noise_mechanism in ('bandmf', 'bsr', 'bisr', 'bandinvmf', 'bifr', 'blt') and not has_target_privacy_params:
             expected_batch_size = self._resolve_expected_batch_size_for_correlated_runtime(
                 total_steps=self.total_steps,
                 poisson_sampling=self.poisson_sampling,
@@ -979,6 +1145,7 @@ class DifferentiallyPrivateTrainer(Trainer):
                 bnb_p=self.bnb_p,
                 bnb_b=self.bnb_b,
                 bsr_bands=self.bsr_bands,
+                bnb_bands=self.bnb_bands,
             )
             correlated_denominator = float(expected_batch_size)
 
@@ -995,6 +1162,11 @@ class DifferentiallyPrivateTrainer(Trainer):
 
         if self.bsr_iterations_number is not None:
             mechanism_kwargs['bsr_iterations_number'] = int(self.bsr_iterations_number)
+
+        if self.bifr_frac is not None:
+            mechanism_kwargs['bifr_frac'] = float(self.bifr_frac)
+        if self.blt_rank is not None:
+            mechanism_kwargs['blt_rank'] = int(self.blt_rank)
 
         if self.bsr_max_participations is not None:
             mechanism_kwargs['bsr_max_participations'] = int(self.bsr_max_participations)
@@ -1064,7 +1236,19 @@ class DifferentiallyPrivateTrainer(Trainer):
         # let's be distributed by default and wrap the model for Opacus DDP.
         # DifferentiallyPrivateDistributedDataParallel is actually a no-op in Opacus, but
         # let's wrap anyway in case of future api changes. https://opacus.ai/tutorials/ddp_tutorial
-        model = opacus.distributed.DifferentiallyPrivateDistributedDataParallel(self.model)
+        distributed_world_size = (
+            int(torch.distributed.get_world_size())
+            if torch.distributed.is_available() and torch.distributed.is_initialized()
+            else 1
+        )
+        if self.noise_mechanism == 'blt':
+            if distributed_world_size > 1:
+                raise ValueError(
+                    'BLT runtime is not yet supported in DPDL distributed mode; use a single-process run.'
+                )
+            model = self.model
+        else:
+            model = opacus.distributed.DifferentiallyPrivateDistributedDataParallel(self.model)
 
         optimizer = self.optimizer
 
@@ -1145,9 +1329,14 @@ class DifferentiallyPrivateTrainer(Trainer):
         return self.privacy_engine.get_epsilon(self.target_delta)
 
     def _unwrap_model(self):
-        # the model is wrapped inside Opacus, and Opacus distributed.
-        # let's unwrap the vanilla model and return it
-        return self.model._module.module
+        m = self.model
+        while hasattr(m, 'module'):
+            m = m.module
+        if hasattr(m, '_module'):
+            m = m._module
+            while hasattr(m, 'module'):
+                m = m.module
+        return m
 
     def _fit_total_steps(self):
         # here we'll keep track of our approximate epochs
@@ -1738,6 +1927,8 @@ class TrainerFactory:
             bsr_min_separation=configuration.bsr_min_separation,
             bsr_mf_sensitivity=configuration.bsr_mf_sensitivity,
             bsr_iterations_number=configuration.bsr_iterations_number,
+            bifr_frac=configuration.bifr_frac,
+            blt_rank=hyperparams.blt_rank,
             bnb_b=configuration.bnb_b,
             bnb_p=configuration.bnb_p,
             bnb_bands=hyperparams.bnb_bands,

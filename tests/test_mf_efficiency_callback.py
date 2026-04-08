@@ -49,14 +49,19 @@ def test_mf_efficiency_callback_gaussian_identity_known_value(tmp_path):
     summary = callback.latest_summary
     assert summary is not None
     assert summary["mf_efficiency_status"] == "computed"
-    # For n=4 and C=I, ||A||_F^2 = 1+2+3+4 = 10, sigma^2 = 4 => 40.
-    assert summary["mse_prefix"] == 40.0
-    assert summary["rmse_prefix"] == math.sqrt(40.0)
+    assert summary["rmse_contract"] == "paper_normalized_prefix_workload_v1"
+    # For n=4 and C=I, ||A||_F^2 = 1+2+3+4 = 10, sigma^2 = 4.
+    assert summary["mse_prefix"] == 10.0
+    assert summary["rmse_prefix"] == math.sqrt(10.0)
+    assert summary["legacy_unnormalized_mse_prefix"] == 40.0
+    assert summary["legacy_unnormalized_rmse_prefix"] == math.sqrt(40.0)
     assert summary["trial_index"] == 7
 
     persisted = json.loads((tmp_path / "mf_efficiency.json").read_text())
-    assert persisted["mse_prefix"] == 40.0
-    assert persisted["rmse_prefix"] == math.sqrt(40.0)
+    assert persisted["mse_prefix"] == 10.0
+    assert persisted["rmse_prefix"] == math.sqrt(10.0)
+    assert persisted["legacy_unnormalized_mse_prefix"] == 40.0
+    assert persisted["legacy_unnormalized_rmse_prefix"] == math.sqrt(40.0)
 
 
 def test_mf_efficiency_callback_unavailable_without_sigma(tmp_path):
@@ -77,6 +82,8 @@ def test_mf_efficiency_callback_unavailable_without_sigma(tmp_path):
     assert summary["mf_efficiency_reason"] == "missing_or_invalid_sigma"
     assert summary["mse_prefix"] is None
     assert summary["rmse_prefix"] is None
+    assert summary["legacy_unnormalized_mse_prefix"] is None
+    assert summary["legacy_unnormalized_rmse_prefix"] is None
 
 
 def test_mf_efficiency_callback_toeplitz_identity_like_and_json_stability(tmp_path):
@@ -96,14 +103,18 @@ def test_mf_efficiency_callback_toeplitz_identity_like_and_json_stability(tmp_pa
     assert summary is not None
     assert summary["mf_efficiency_status"] == "computed"
     # For n=3 and C=I, ||A||_F^2 = 1+2+3 = 6.
-    assert summary["mse_prefix"] == 6.0
-    assert summary["rmse_prefix"] == math.sqrt(6.0)
+    assert summary["mse_prefix"] == 2.0
+    assert summary["rmse_prefix"] == math.sqrt(2.0)
+    assert summary["legacy_unnormalized_mse_prefix"] == 6.0
+    assert summary["legacy_unnormalized_rmse_prefix"] == math.sqrt(6.0)
 
     lines = (tmp_path / "mf_efficiency_trials.jsonl").read_text().strip().splitlines()
     assert len(lines) == 1
     row = json.loads(lines[0])
     assert isinstance(row["mse_prefix"], float)
     assert isinstance(row["rmse_prefix"], float)
+    assert isinstance(row["legacy_unnormalized_mse_prefix"], float)
+    assert isinstance(row["legacy_unnormalized_rmse_prefix"], float)
 
 
 def test_mf_efficiency_callback_uses_mechanism_z_std_when_optimizer_sigma_missing(tmp_path):
@@ -124,8 +135,10 @@ def test_mf_efficiency_callback_uses_mechanism_z_std_when_optimizer_sigma_missin
     assert summary["sigma_source"] == "mechanism_state.z_std"
     assert summary["sigma_c"] == 0.5
     # For n=3 and C=I, ||A||_F^2 = 6 and sigma^2 = 0.25.
-    assert summary["mse_prefix"] == 1.5
-    assert summary["rmse_prefix"] == math.sqrt(1.5)
+    assert summary["mse_prefix"] == 0.5
+    assert summary["rmse_prefix"] == math.sqrt(0.5)
+    assert summary["legacy_unnormalized_mse_prefix"] == 1.5
+    assert summary["legacy_unnormalized_rmse_prefix"] == math.sqrt(1.5)
 
 
 def test_mf_efficiency_callback_bnb_uses_c_matrix_horizon_when_aligned(tmp_path):
@@ -146,8 +159,10 @@ def test_mf_efficiency_callback_bnb_uses_c_matrix_horizon_when_aligned(tmp_path)
     assert summary["horizon_training"] == 5
     assert summary["horizon"] == 5
     # For n=5 and C=I, ||A||_F^2 = 1+2+...+5 = 15.
-    assert summary["mse_prefix"] == 15.0
-    assert summary["rmse_prefix"] == math.sqrt(15.0)
+    assert summary["mse_prefix"] == 3.0
+    assert summary["rmse_prefix"] == math.sqrt(3.0)
+    assert summary["legacy_unnormalized_mse_prefix"] == 15.0
+    assert summary["legacy_unnormalized_rmse_prefix"] == math.sqrt(15.0)
 
 
 def test_mf_efficiency_callback_invalid_z_std_does_not_fallback_to_optimizer(tmp_path):

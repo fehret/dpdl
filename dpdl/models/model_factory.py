@@ -115,7 +115,7 @@ class ModelFactory:
             elif configuration.model_name == 'bsr-test-net':
                 model_instance = BSRTestModel(num_classes=num_classes)
                 transforms = model_instance.get_transforms()
-            elif configuration.model_name == 'bnb-vgg-net':
+            elif configuration.model_name in {'bnb-vgg-net', 'vgg_bnb_reference'}:
                 model_instance = VGGBnBReferenceModel(
                     num_classes=num_classes,  # Other defaults from the JAX implemenation
                 )

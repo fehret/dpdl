@@ -427,7 +427,7 @@ def cli(
         record_mf_efficiency: Annotated[
             Optional[bool],
             typer.Option(
-                help='Record MF efficiency metrics (prefix MSE/RMSE)',
+                help='Record MF efficiency metrics (normalized paper prefix MSE/RMSE plus legacy diagnostic)',
                 rich_help_panel='Logging options',
             )
         ] = False,
@@ -546,7 +546,7 @@ def cli(
         noise_mechanism: Annotated[
             Optional[str],
             typer.Option(
-                help='Noise mechanism ("gaussian", "bandmf", "bsr", "bisr", or "bandinvmf")',
+                help='Noise mechanism ("gaussian", "bandmf", "bsr", "bisr", "bandinvmf", "bifr", or "blt"); BLT is workload-driven and does not expose lambda',
                 rich_help_panel='Opacus options',
             )
         ] = 'gaussian',
@@ -571,6 +571,20 @@ def cli(
                 rich_help_panel='BSR options',
             )
         ] = None,
+        bifr_frac: Annotated[
+            Optional[float],
+            typer.Option(
+                help='BIFR interpolation parameter frac in [0,1] for fixed-batch BIFR',
+                rich_help_panel='BSR options',
+            )
+        ] = None,
+        blt_rank: Annotated[
+            Optional[int],
+            typer.Option(
+                help='BLT workload complexity control; Opacus resolves theta/theta_hat implicitly from workload inputs and this rank-style knob',
+                rich_help_panel='BSR options',
+            )
+        ] = None,
         bsr_mf_sensitivity: Annotated[
             Optional[float],
             typer.Option(
@@ -581,14 +595,14 @@ def cli(
         bnb_b: Annotated[
             Optional[int],
             typer.Option(
-                help='BNB b-min-separation parameter b (required for b_min_sep)',
+                help='Optional BNB structured-sampling integer: bins for balls_in_bins, min-separation b for b_min_sep; if omitted, DPDL derives balls_in_bins bins from steps per epoch and b_min_sep b from bands when available',
                 rich_help_panel='BNB options',
             )
         ] = None,
         bnb_p: Annotated[
             Optional[float],
             typer.Option(
-                help='BNB b-min-separation participation probability p in (0,1] (required for b_min_sep)',
+                help='Optional BNB b-min-separation eligibility probability p in (0,1]; if omitted, DPDL derives it from the target average batch size and b',
                 rich_help_panel='BNB options',
             )
         ] = None,

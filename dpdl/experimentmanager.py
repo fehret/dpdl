@@ -255,7 +255,15 @@ def log_final_epsilon(config_manager, trainer):
     if config_manager.hyperparams.target_epsilon == -1:
         return
 
-    final_epsilon = trainer.get_epsilon()
+    try:
+        final_epsilon = trainer.get_epsilon()
+    except ValueError as exc:
+        log.warning(
+            "Skipping final epsilon logging because accountant evaluation failed: %s",
+            exc,
+        )
+        return None
+
     if torch.distributed.get_rank() != 0:
         return final_epsilon
 

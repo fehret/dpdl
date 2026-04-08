@@ -130,6 +130,67 @@ def test_fixed_batch_bandinvmf_valid_minimal() -> None:
     assert cfg.sampling_mode == 'torch_sampler'
 
 
+def test_fixed_batch_bifr_valid_minimal() -> None:
+    cfg = Configuration(
+        command='train',
+        noise_mechanism='bifr',
+        accountant='bsr',
+        poisson_sampling=False,
+        sampling_mode='torch_sampler',
+        bsr_bands=4,
+        bifr_frac=0.25,
+    )
+    assert cfg.noise_mechanism == 'bifr'
+    assert cfg.sampling_mode == 'torch_sampler'
+    assert cfg.bifr_frac == pytest.approx(0.25)
+
+
+def test_fixed_batch_blt_valid_minimal() -> None:
+    cfg = Configuration(
+        command='train',
+        noise_mechanism='blt',
+        accountant='blt',
+        poisson_sampling=False,
+        sampling_mode='torch_sampler',
+        blt_rank=2,
+    )
+    assert cfg.noise_mechanism == 'blt'
+    assert cfg.accountant == 'blt'
+    assert cfg.blt_rank == 2
+
+
+def test_amplified_blt_balls_in_bins_valid_minimal() -> None:
+    cfg = Configuration(
+        command='train',
+        noise_mechanism='blt',
+        accountant='bnb',
+        poisson_sampling=False,
+        sampling_mode='balls_in_bins',
+        blt_rank=2,
+    )
+    assert cfg.noise_mechanism == 'blt'
+    assert cfg.accountant == 'bnb'
+    assert cfg.sampling_mode == 'balls_in_bins'
+
+
+def test_blt_rejects_lambda_surface() -> None:
+    from dpdl.configurationmanager import ConfigurationManager
+
+    with pytest.raises(ValueError, match='lambda'):
+        ConfigurationManager(
+            {
+                'command': 'train',
+                'noise_mechanism': 'blt',
+                'accountant': 'blt',
+                'poisson_sampling': False,
+                'sampling_mode': 'torch_sampler',
+                'target_epsilon': 4.0,
+                'target_delta': 1e-5,
+                'lambda': 0.4,
+            }
+        )
+
+
 def test_fixed_batch_bsr_cyclic_is_explicitly_allowed() -> None:
     cfg = Configuration(
         command='train',
@@ -163,6 +224,30 @@ def test_bisr_rejects_unsupported_sampling_mode() -> None:
             accountant='bsr',
             poisson_sampling=False,
             sampling_mode='balls_in_bins',
+            bsr_bands=4,
+        )
+
+
+def test_bifr_rejects_wrong_accountant() -> None:
+    with pytest.raises(ValidationError, match='BIFR mechanism requires --accountant in \\{bsr\\}'):
+        Configuration(
+            command='train',
+            noise_mechanism='bifr',
+            accountant='bnb',
+            poisson_sampling=False,
+            sampling_mode='torch_sampler',
+            bsr_bands=4,
+        )
+
+
+def test_bifr_rejects_unsupported_sampling_mode() -> None:
+    with pytest.raises(ValidationError, match='does not support --sampling-mode'):
+        Configuration(
+            command='train',
+            noise_mechanism='bifr',
+            accountant='bsr',
+            poisson_sampling=False,
+            sampling_mode='cyclic_poisson',
             bsr_bands=4,
         )
 
@@ -276,16 +361,17 @@ def test_bandinvmf_valid_balls_in_bins_minimal() -> None:
     assert cfg.sampling_mode == 'balls_in_bins'
 
 
-def test_balls_in_bins_mf_rejects_missing_bnb_b() -> None:
-    with pytest.raises(ValidationError, match='balls_in_bins sampling requires --bnb-b'):
-        Configuration(
-            command='train',
-            noise_mechanism='bsr',
-            accountant='bnb',
-            poisson_sampling=False,
-            sampling_mode='balls_in_bins',
-            bsr_bands=4,
-        )
+def test_balls_in_bins_mf_accepts_missing_bnb_b() -> None:
+    cfg = Configuration(
+        command='train',
+        noise_mechanism='bsr',
+        accountant='bnb',
+        poisson_sampling=False,
+        sampling_mode='balls_in_bins',
+        bsr_bands=4,
+    )
+    assert cfg.sampling_mode == 'balls_in_bins'
+    assert cfg.bnb_b is None
 
 
 def test_gaussian_bnb_valid_balls_in_bins_with_alias() -> None:
@@ -300,16 +386,30 @@ def test_gaussian_bnb_valid_balls_in_bins_with_alias() -> None:
     assert cfg.sampling_mode == 'balls_in_bins'
 
 
-def test_gaussian_bnb_rejects_b_min_sep() -> None:
-    with pytest.raises(ValidationError, match='temporarily disabled'):
-        Configuration(
-            command='train',
-            noise_mechanism='gaussian',
-            accountant='bnb',
-            poisson_sampling=False,
-            sampling_mode='b_min_sep',
-            bnb_b=4,
-        )
+def test_gaussian_bnb_accepts_b_min_sep_without_eager_defaulted_p() -> None:
+    cfg = Configuration(
+        command='train',
+        noise_mechanism='gaussian',
+        accountant='bnb',
+        poisson_sampling=False,
+        sampling_mode='b_min_sep',
+        bnb_b=4,
+    )
+    assert cfg.sampling_mode == 'b_min_sep'
+    assert cfg.bnb_p is None
+
+
+def test_bsr_bnb_accepts_b_min_sep_without_explicit_bnb_b() -> None:
+    cfg = Configuration(
+        command='train',
+        noise_mechanism='bsr',
+        accountant='bnb',
+        poisson_sampling=False,
+        sampling_mode='b_min_sep',
+        bsr_bands=4,
+    )
+    assert cfg.sampling_mode == 'b_min_sep'
+    assert cfg.bnb_b is None
 
 
 def test_gaussian_bnb_accepts_torch_sampler_configuration() -> None:

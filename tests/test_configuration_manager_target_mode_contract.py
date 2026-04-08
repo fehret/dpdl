@@ -52,7 +52,7 @@ def test_configuration_manager_accepts_explicit_bsr_z_std_privacy_path() -> None
                 'noise_mechanism': 'gaussian',
                 'accountant': 'prv',
             },
-            'BSR/BandMF/BISR/BandInvMF-specific parameters require --noise-mechanism bandmf, bsr, bisr, or bandinvmf',
+            'BSR/BandMF/BISR/BandInvMF/BIFR-specific parameters require --noise-mechanism bandmf, bsr, bisr, bandinvmf, or bifr',
         ),
         (
             {
@@ -127,6 +127,31 @@ def test_configuration_manager_accepts_any_explicit_privacy_target_path(
         }
     )
     assert manager.configuration.privacy is True
+
+
+def test_configuration_manager_accepts_gaussian_bnb_optimistic_without_bifr_frac() -> None:
+    manager = ConfigurationManager(
+        {
+            'command': 'train',
+            'privacy': True,
+            'noise_mechanism': 'gaussian',
+            'accountant': 'bnb',
+            'sampling_mode': 'balls_in_bins',
+            'poisson_sampling': False,
+            'noise_multiplier': 1.2,
+            'target_epsilon': None,
+            'noise_batch_ratio': None,
+            'bnb_b': 98,
+            'bnb_bands': 1,
+            'bnb_num_samples': 32,
+            'bnb_chunk_size': 32,
+            'bnb_calibration_mode': 'optimistic',
+            'epochs': 1,
+            'batch_size': 512,
+            'max_grad_norm': 1.0,
+        }
+    )
+    assert manager.configuration.bnb_calibration_mode == 'optimistic'
 
 
 def test_configuration_manager_rejects_bsr_z_std_with_target_epsilon() -> None:

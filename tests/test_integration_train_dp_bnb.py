@@ -32,8 +32,12 @@ def _capture_dp_handoff(
     noise_mechanism: str,
     use_explicit_coeffs: bool,
     total_steps: int,
+    sampling_mode: str = "balls_in_bins",
+    bnb_b: int | None = 2,
+    bnb_p: float | None = None,
+    blt_rank: int | None = None,
     world_size: int = 1,
-) -> tuple[dict, dict]:
+) -> tuple[dict, dict, object, int]:
     monkeypatch.setattr(torch.distributed, "get_rank", lambda: 0)
     monkeypatch.setattr(torch.distributed, "get_world_size", lambda: world_size)
     monkeypatch.setattr(torch.distributed, "is_initialized", lambda: True)
@@ -49,7 +53,9 @@ def _capture_dp_handoff(
 
     def wrapped_make_private(self, *args, **kwargs):
         captured["make_private_kwargs"] = copy.deepcopy(kwargs)
+        captured["dataset_size"] = int(len(kwargs["data_loader"].dataset))
         captured["pre_state"] = copy.deepcopy(kwargs["noise_mechanism_config"].mechanism_state)
+        captured["sampling_semantics"] = copy.deepcopy(kwargs.get("sampling_semantics"))
         result = orig_make_private(self, *args, **kwargs)
         captured["post_state"] = copy.deepcopy(self.noise_mechanism_config.mechanism_state)
         return result
@@ -76,19 +82,30 @@ def _capture_dp_handoff(
         "noise_batch_ratio": None,
         "noise_mechanism": noise_mechanism,
         "accountant": "bnb",
-        "sampling_mode": "balls_in_bins",
-        "bnb_b": 2,
+        "sampling_mode": sampling_mode,
         "noise_multiplier": 10.0,
-        "bsr_bands": 2,
         "pretrained": False,
     }
+    if noise_mechanism in ("bsr", "bisr"):
+        cli_params["bsr_bands"] = 2
+    if noise_mechanism == "blt" and blt_rank is not None:
+        cli_params["blt_rank"] = blt_rank
+    if bnb_b is not None:
+        cli_params["bnb_b"] = bnb_b
+    if bnb_p is not None:
+        cli_params["bnb_p"] = bnb_p
     if use_explicit_coeffs:
         cli_params["bsr_coeffs"] = [1.0, 0.2] if noise_mechanism == "bsr" else [1.0, -0.5]
 
     cfg_mgr = ConfigurationManager(cli_params)
     TrainerFactory.get_trainer(cfg_mgr)
 
-    return captured["pre_state"], captured["post_state"]
+    return (
+        captured["pre_state"],
+        captured["post_state"],
+        captured["sampling_semantics"],
+        captured["dataset_size"],
+    )
 
 
 def test_capture_dp_handoff_marks_bnb_chunk_shard_for_distributed_runtime(
@@ -155,12 +172,14 @@ def _run_dp_bnb(
     *,
     experiment: str,
     use_target_epsilon: bool,
+    total_steps: int = 1,
     sampling_mode: str = 'balls_in_bins',
     noise_mechanism: str = 'gaussian',
     accountant: str = 'bnb',
     model_name: str = 'vit_tiny_patch16_224.augreg_in21k',
     model_args: list[str] | None = None,
     use_explicit_coeffs: bool = True,
+    blt_rank: int | None = None,
 ) -> dict:
     repo_root = Path(__file__).resolve().parents[1]
     env = base_env()
@@ -179,7 +198,7 @@ def _run_dp_bnb(
         '--privacy',
         '--use-steps',
         '--total-steps',
-        '1',
+        str(total_steps),
         '--batch-size',
         '4',
         '--physical-batch-size',
@@ -199,13 +218,13 @@ def _run_dp_bnb(
         accountant,
         '--sampling-mode',
         sampling_mode,
-        '--bnb-b',
-        '2',
         '--log-dir',
         str(tmp_path),
         '--experiment-name',
         experiment,
     ]
+    if sampling_mode in ('balls_in_bins', 'b_min_sep'):
+        cmd_args.extend(['--bnb-b', '2'])
 
     if noise_mechanism == 'bsr':
         cmd_args.extend(['--bsr-bands', '2'])
@@ -215,6 +234,9 @@ def _run_dp_bnb(
         cmd_args.extend(['--bsr-bands', '2'])
         if use_explicit_coeffs:
             cmd_args.extend(['--bsr-coeffs', '1.0', '--bsr-coeffs', '-0.5'])
+    elif noise_mechanism == 'blt':
+        if blt_rank is not None:
+            cmd_args.extend(['--blt-rank', str(blt_rank)])
     else:
         if noise_mechanism != 'gaussian':
             raise AssertionError(f'unsupported test noise_mechanism {noise_mechanism!r}')
@@ -233,7 +255,7 @@ def _run_dp_bnb(
 
     expected_hypers = {
         'epochs': None,
-        'total_steps': 1,
+        'total_steps': total_steps,
         'batch_size': 4,
         'max_grad_norm': 1.0,
     }
@@ -256,11 +278,13 @@ def _run_dp_bnb(
         'sampling_mode': sampling_mode,
         'poisson_sampling': False,
     }
-    if noise_mechanism == 'gaussian':
+    if sampling_mode in ('balls_in_bins', 'b_min_sep'):
         expected_config['bnb_b'] = 2
-    else:
-        expected_config['bnb_b'] = 2
+    if noise_mechanism in ('bsr', 'bisr'):
         expected_config['bsr_bands'] = 2
+    if noise_mechanism == 'blt' and blt_rank is not None:
+        expected_config['blt_rank'] = blt_rank
+        expected_hypers['blt_rank'] = blt_rank
 
     assert_config_and_hyperparams(
         tmp_path / experiment,
@@ -340,6 +364,7 @@ def test_integration_train_dp_bsr_balls_in_bins_fixed_noise_autocoeff_path(
         image_dataset_path,
         experiment='train-dp-bsr-balls-in-bins-fixed-noise-autocoeff',
         use_target_epsilon=False,
+        total_steps=2,
         sampling_mode='balls_in_bins',
         noise_mechanism='bsr',
         accountant='bnb',
@@ -373,6 +398,7 @@ def test_integration_train_dp_bisr_balls_in_bins_fixed_noise_autocoeff_path(
         image_dataset_path,
         experiment='train-dp-bisr-balls-in-bins-fixed-noise-autocoeff',
         use_target_epsilon=False,
+        total_steps=2,
         sampling_mode='balls_in_bins',
         noise_mechanism='bisr',
         accountant='bnb',
@@ -401,7 +427,7 @@ def test_bsr_balls_in_bins_dpdl_handoff_stays_minimal_and_opacus_resolves(
     image_dataset_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    pre_state, post_state = _capture_dp_handoff(
+    pre_state, post_state, _sampling_semantics, _dataset_size = _capture_dp_handoff(
         image_dataset_path,
         monkeypatch,
         noise_mechanism="bsr",
@@ -428,7 +454,7 @@ def test_bisr_balls_in_bins_dpdl_handoff_stays_minimal_and_opacus_resolves(
     image_dataset_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    pre_state, post_state = _capture_dp_handoff(
+    pre_state, post_state, _sampling_semantics, _dataset_size = _capture_dp_handoff(
         image_dataset_path,
         monkeypatch,
         noise_mechanism="bisr",
@@ -449,6 +475,224 @@ def test_bisr_balls_in_bins_dpdl_handoff_stays_minimal_and_opacus_resolves(
     assert post_state["bnb_c_matrix"] is not None
     assert post_state["bnb_c_matrix_contract"] is not None
     assert post_state["bnb_horizon"] == 7
+
+
+def test_bsr_b_min_sep_dpdl_handoff_defaults_probability_and_opacus_resolves(
+    image_dataset_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pre_state, post_state, sampling_semantics, dataset_size = _capture_dp_handoff(
+        image_dataset_path,
+        monkeypatch,
+        noise_mechanism="bsr",
+        use_explicit_coeffs=True,
+        total_steps=7,
+        sampling_mode="b_min_sep",
+        bnb_b=4,
+    )
+
+    for key in (
+        "bnb_accountant_coeffs",
+        "bnb_accountant_coeffs_source",
+        "bnb_c_matrix",
+        "bnb_c_matrix_contract",
+    ):
+        assert key not in pre_state
+
+    assert pre_state["bnb_horizon"] == 7
+    assert sampling_semantics is not None
+    assert sampling_semantics.sampling_mode == "b_min_sep"
+    p0 = 4.0 / float(dataset_size)
+    expected_p = p0 / (1.0 - p0 * 3.0)
+    assert abs(float(sampling_semantics.privacy_metadata["p"]) - expected_p) < 1e-12
+    assert post_state["bnb_horizon"] == 7
+
+
+def test_blt_fixed_batch_dpdl_handoff_uses_workload_resolved_state(
+    image_dataset_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(torch.distributed, "get_rank", lambda: 0)
+    monkeypatch.setattr(torch.distributed, "get_world_size", lambda: 1)
+    monkeypatch.setattr(torch.distributed, "is_initialized", lambda: True)
+    monkeypatch.setattr(torch.distributed, "barrier", lambda: None)
+
+    captured: dict[str, dict] = {}
+    orig_make_private = opacus.PrivacyEngine.make_private
+
+    def wrapped_make_private(self, *args, **kwargs):
+        captured["kwargs"] = copy.deepcopy(kwargs)
+        captured["pre_state"] = copy.deepcopy(kwargs["noise_mechanism_config"].mechanism_state)
+        return orig_make_private(self, *args, **kwargs)
+
+    monkeypatch.setattr(opacus.PrivacyEngine, "make_private", wrapped_make_private)
+
+    cfg_mgr = ConfigurationManager(
+        {
+            "command": "train",
+            "device": "cpu",
+            "dataset_name": "local-image",
+            "dataset_path": str(image_dataset_path),
+            "model_name": "vit_tiny_patch16_224.augreg_in21k",
+            "privacy": True,
+            "use_steps": True,
+            "total_steps": 7,
+            "batch_size": 4,
+            "physical_batch_size": 4,
+            "num_workers": 0,
+            "seed": 42,
+            "split_seed": 42,
+            "max_grad_norm": 1.0,
+            "poisson_sampling": False,
+            "target_epsilon": None,
+            "noise_batch_ratio": None,
+            "noise_mechanism": "blt",
+            "accountant": "blt",
+            "sampling_mode": "torch_sampler",
+            "noise_multiplier": 10.0,
+            "blt_rank": 2,
+            "pretrained": False,
+        }
+    )
+    TrainerFactory.get_trainer(cfg_mgr)
+
+    kwargs = captured["kwargs"]
+    state = captured["pre_state"]
+    assert kwargs["noise_mechanism_config"].mechanism == "blt"
+    assert kwargs["noise_mechanism_config"].accounting_mode == "blt_accountant"
+    assert kwargs["sampling_semantics"].sampling_mode == "torch_sampler"
+    assert state["blt_rank"] == 2
+    assert state["blt_horizon"] == 7
+    assert state["blt_selection_mode"] == "implicit_workload_default"
+    assert state["noise_multiplier_ref"] == pytest.approx(10.0)
+    assert state["z_std"] > 0.0
+    assert "forward" in state and "inverse" in state
+
+
+def test_blt_balls_in_bins_dpdl_handoff_stays_minimal_and_opacus_resolves(
+    image_dataset_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pre_state, post_state, sampling_semantics, _dataset_size = _capture_dp_handoff(
+        image_dataset_path,
+        monkeypatch,
+        noise_mechanism="blt",
+        use_explicit_coeffs=False,
+        total_steps=7,
+        sampling_mode="balls_in_bins",
+        blt_rank=2,
+    )
+
+    for key in (
+        "bnb_accountant_coeffs",
+        "bnb_accountant_coeffs_source",
+        "bnb_c_matrix",
+        "bnb_c_matrix_contract",
+    ):
+        assert key not in pre_state
+
+    assert sampling_semantics is not None
+    assert sampling_semantics.sampling_mode == "balls_in_bins"
+    assert pre_state["blt_rank"] == 2
+    assert pre_state["bnb_horizon"] == 7
+    assert post_state["bnb_accountant_coeffs_source"] == "normalized_forward_c_col"
+    assert post_state["bnb_c_matrix"] is not None
+    assert post_state["bnb_c_matrix_contract"] is not None
+    assert post_state["bnb_horizon"] == 7
+
+
+def test_blt_balls_in_bins_target_epsilon_forwards_bnb_controls(
+    image_dataset_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(torch.distributed, "get_rank", lambda: 0)
+    monkeypatch.setattr(torch.distributed, "get_world_size", lambda: 1)
+    monkeypatch.setattr(torch.distributed, "is_initialized", lambda: True)
+    monkeypatch.setattr(torch.distributed, "barrier", lambda: None)
+
+    captured: dict[str, dict] = {}
+
+    def fake_make_private_with_epsilon(self, *args, **kwargs):
+        captured["kwargs"] = copy.deepcopy(kwargs)
+        return kwargs["module"], kwargs["optimizer"], kwargs["data_loader"]
+
+    monkeypatch.setattr(opacus.PrivacyEngine, "make_private_with_epsilon", fake_make_private_with_epsilon)
+
+    cfg_mgr = ConfigurationManager(
+        {
+            "command": "train",
+            "device": "cpu",
+            "dataset_name": "local-image",
+            "dataset_path": str(image_dataset_path),
+            "model_name": "vit_tiny_patch16_224.augreg_in21k",
+            "privacy": True,
+            "use_steps": True,
+            "total_steps": 7,
+            "batch_size": 4,
+            "physical_batch_size": 4,
+            "num_workers": 0,
+            "seed": 42,
+            "split_seed": 42,
+            "max_grad_norm": 1.0,
+            "poisson_sampling": False,
+            "target_epsilon": 8.0,
+            "noise_multiplier": None,
+            "noise_batch_ratio": None,
+            "noise_mechanism": "blt",
+            "accountant": "bnb",
+            "sampling_mode": "balls_in_bins",
+            "bnb_b": 2,
+            "bnb_num_samples": 123,
+            "bnb_calibration_mode": "optimistic",
+            "blt_rank": 2,
+            "pretrained": False,
+        }
+    )
+    TrainerFactory.get_trainer(cfg_mgr)
+
+    kwargs = captured["kwargs"]
+    assert kwargs["noise_mechanism_config"].mechanism == "blt"
+    assert kwargs["noise_mechanism_config"].accounting_mode == "bnb_accountant"
+    assert kwargs["sampling_semantics"].sampling_mode == "balls_in_bins"
+    assert kwargs["bnb_num_samples"] == 123
+    assert kwargs["bnb_calibration_mode"] == "optimistic"
+    assert kwargs["blt_rank"] == 2
+
+
+@pytest.mark.integration
+def test_integration_train_dp_blt_fixed_noise_path(
+    tmp_path: Path, image_dataset_path: Path
+) -> None:
+    metrics = _run_dp_bnb(
+        tmp_path,
+        image_dataset_path,
+        experiment='train-dp-blt-fixed-noise',
+        use_target_epsilon=False,
+        total_steps=2,
+        sampling_mode='torch_sampler',
+        noise_mechanism='blt',
+        accountant='blt',
+        blt_rank=2,
+    )
+    assert 'loss' in metrics
+
+
+@pytest.mark.integration
+def test_integration_train_dp_blt_balls_in_bins_fixed_noise_path(
+    tmp_path: Path, image_dataset_path: Path
+) -> None:
+    metrics = _run_dp_bnb(
+        tmp_path,
+        image_dataset_path,
+        experiment='train-dp-blt-balls-in-bins-fixed-noise',
+        use_target_epsilon=False,
+        total_steps=2,
+        sampling_mode='balls_in_bins',
+        noise_mechanism='blt',
+        accountant='bnb',
+        blt_rank=2,
+    )
+    assert 'loss' in metrics
 
 
 # XXX: This is EXTREMELY slow. First of all the MC estimation of sigma

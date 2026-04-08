@@ -92,6 +92,31 @@ def test_log_bsr_trace_emits_for_bandinvmf(caplog: pytest.LogCaptureFixture) -> 
     assert payload['mechanism'] == 'bandinvmf'
 
 
+def test_log_bsr_trace_emits_for_bifr(caplog: pytest.LogCaptureFixture) -> None:
+    caplog.set_level(logging.INFO)
+    DifferentiallyPrivateTrainer._log_bsr_trace(
+        stage='unit-test',
+        sampling_semantics=SimpleNamespace(
+            sampling_mode='torch_sampler',
+            privacy_metadata={},
+        ),
+        noise_mechanism_config=SimpleNamespace(
+            mechanism='bifr',
+            accounting_mode='bsr_accountant',
+            mechanism_state={'coeffs': [1.0, 0.2], 'bsr_bands': 8, 'bifr_frac': 0.25},
+        ),
+        has_target_privacy_params=False,
+        noise_multiplier_ref=1.0,
+        correlated_denominator=16.0,
+        mechanism_kwargs={'bifr_frac': 0.25},
+    )
+    messages = [record.message for record in caplog.records if record.message.startswith('BSR_TRACE ')]
+    assert messages, 'expected BSR_TRACE payload for bifr'
+    payload = json.loads(messages[-1].split('BSR_TRACE ', 1)[1])
+    assert payload['mechanism'] == 'bifr'
+    assert payload['mechanism_state']['bifr_frac'] == pytest.approx(0.25)
+
+
 def test_validate_cyclic_steps_vs_bands_rejects_bandinvmf_when_steps_too_small() -> None:
     with pytest.raises(ValueError, match='require steps >= bands'):
         DifferentiallyPrivateTrainer._validate_cyclic_steps_vs_bands(
