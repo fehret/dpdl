@@ -123,22 +123,36 @@ def main():
         log.info('All ranks initialized.')
 
     exit_code = 0
+    fatal_error: BaseException | None = None
 
     # Run with CLI params and perform clean shutdown
     try:
         typer.run(cli)
     except SystemExit as e:
         exit_code = int(e.code) if e.code is not None else 0
+    except BaseException as exc:
+        fatal_error = exc
+        exit_code = 1
+        log.exception(
+            'Unhandled exception on rank %s. Tearing down distributed state without forcing syncrhonization.',
+            rank,
+        )
     finally:
 
         if torch.distributed.is_initialized():
-            try:
-                # Make sure all processes are in sync before destroying process group
-                torch.distributed.barrier()
-            except Exception:
-                pass  # If ranks are uneven, don't block shutdown forever
+            if fatal_error is None:
+                try:
+                    # Only do a synchronized barrier on the clean path.
+                    # On fatal exceptions one or more ranks may already be unwinding,
+                    # so a normal barrier tends to make teardown noisier rather than cleaner.
+                    torch.distributed.barrier()
+                except Exception:
+                    pass
 
-            torch.distributed.destroy_process_group()
+            try:
+                torch.distributed.destroy_process_group()
+            except Exception:
+                pass
 
             log.info(f'Rank {rank} done!')
 
@@ -147,6 +161,9 @@ def main():
                 os.unlink(dist_init_file.name)
             except OSError:
                 pass
+
+    if fatal_error is not None:
+        return exit_code
 
     return exit_code
 
