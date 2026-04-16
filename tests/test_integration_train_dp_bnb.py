@@ -6,6 +6,7 @@ import copy
 import pytest
 import torch
 import opacus
+import datasets
 
 pytest.importorskip('torch')
 pytest.importorskip('opacus')
@@ -29,6 +30,7 @@ def _capture_dp_handoff(
     image_dataset_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     *,
+    command: str = "train",
     noise_mechanism: str,
     use_explicit_coeffs: bool,
     total_steps: int,
@@ -37,6 +39,7 @@ def _capture_dp_handoff(
     bnb_p: float | None = None,
     blt_buffers: int | None = None,
     world_size: int = 1,
+    batch_size: int = 4,
 ) -> tuple[dict, dict, object, int]:
     monkeypatch.setattr(torch.distributed, "get_rank", lambda: 0)
     monkeypatch.setattr(torch.distributed, "get_world_size", lambda: world_size)
@@ -63,7 +66,7 @@ def _capture_dp_handoff(
     monkeypatch.setattr(opacus.PrivacyEngine, "make_private", wrapped_make_private)
 
     cli_params = {
-        "command": "train",
+        "command": command,
         "device": "cpu",
         "dataset_name": "local-image",
         "dataset_path": str(image_dataset_path),
@@ -71,8 +74,8 @@ def _capture_dp_handoff(
         "privacy": True,
         "use_steps": True,
         "total_steps": total_steps,
-        "batch_size": 4,
-        "physical_batch_size": 4,
+        "batch_size": batch_size,
+        "physical_batch_size": batch_size,
         "num_workers": 0,
         "seed": 42,
         "split_seed": 42,
@@ -109,6 +112,18 @@ def _capture_dp_handoff(
         captured["sampling_semantics"],
         captured["dataset_size"],
     )
+
+
+def _build_train_test_only_image_dataset(src: Path, dst: Path) -> Path:
+    ds = datasets.load_from_disk(str(src))
+    reduced = datasets.DatasetDict(
+        {
+            "train": ds["train"],
+            "test": ds["test"],
+        }
+    )
+    reduced.save_to_disk(str(dst))
+    return dst
 
 
 def test_capture_dp_handoff_marks_bnb_chunk_shard_for_distributed_runtime(
@@ -190,6 +205,33 @@ def test_capture_dp_handoff_allows_blt_in_distributed_runtime(
     assert dataset_size > 0
     assert pre_state["blt_buffers"] == 4
     assert post_state["blt_buffers"] == 4
+
+
+def test_optimize_balls_in_bins_mf_uses_full_train_split_as_workload_reference(
+    image_dataset_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    dataset_path = _build_train_test_only_image_dataset(
+        image_dataset_path,
+        tmp_path / "train-test-only-image",
+    )
+    pre_state, post_state, sampling_semantics, dataset_size = _capture_dp_handoff(
+        dataset_path,
+        monkeypatch,
+        command="optimize",
+        noise_mechanism="bsr",
+        use_explicit_coeffs=False,
+        total_steps=2,
+        batch_size=3,
+        bnb_b=None,
+    )
+
+    assert dataset_size == 18
+    assert sampling_semantics.sampling_mode == "balls_in_bins"
+    assert sampling_semantics.privacy_metadata["bins"] == 7
+    assert pre_state["bnb_bins"] == 7
+    assert post_state["bnb_bins"] == 7
 
 
 def _run_dp_bnb(

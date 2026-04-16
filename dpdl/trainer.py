@@ -592,6 +592,7 @@ class DifferentiallyPrivateTrainer(Trainer):
         bnb_chunk_size: int | None = None,
         bnb_seed: int | None = None,
         bnb_calibration_mode: str | None = None,
+        reference_train_split_size: int | None = None,
         secure_mode: bool = False,
         target_epsilon: float | None = None,
         target_delta: float | None = None,
@@ -632,6 +633,9 @@ class DifferentiallyPrivateTrainer(Trainer):
         self.bnb_chunk_size = bnb_chunk_size
         self.bnb_seed = bnb_seed
         self.bnb_calibration_mode = bnb_calibration_mode
+
+        # This is the full training set size, if we have created a validation split
+        self.reference_train_split_size = reference_train_split_size
 
         # setup opacus privacy engine
         privacy_engine_args = {
@@ -958,10 +962,14 @@ class DifferentiallyPrivateTrainer(Trainer):
             if self.noise_mechanism == 'bifr' and self.bifr_frac is not None:
                 mechanism_state['bifr_frac'] = float(self.bifr_frac)
             if self.noise_mechanism == 'blt':
-                blt_total_steps = int(self.total_steps) if self.total_steps else int(self.epochs) * int(len(train_dataloader))
+                blt_total_steps = (
+                    int(self.total_steps)
+                    if self.total_steps
+                    else int(self.epochs) * int(reference_train_steps_per_epoch)
+                )
                 mechanism_state = resolve_blt_workload_mechanism_state(
                     total_steps=blt_total_steps,
-                    dataset_size=int(len(train_dataloader.dataset)),
+                    dataset_size=reference_train_split_size,
                     logical_batch_size=int(self.datamodule.batch_size),
                     max_grad_norm=float(self.max_grad_norm),
                     loss_reduction=str(getattr(self.model.criterion, 'reduction', 'mean')),
@@ -1060,12 +1068,21 @@ class DifferentiallyPrivateTrainer(Trainer):
             )
 
         train_dataloader = self.datamodule.get_dataloader('train')
+        reference_train_split_size = int(len(train_dataloader.dataset))
+        reference_train_steps_per_epoch = int(len(train_dataloader))
+
+        if self.reference_train_split_size is not None and self.sampling_mode == 'balls_in_bins':
+            reference_train_split_size = int(self.reference_train_split_size)
+            reference_train_steps_per_epoch = int(
+                math.ceil(reference_train_split_size / int(self.datamodule.batch_size))
+            )
+
         resolved_bnb_b = self._resolve_bnb_structured_b(
             sampling_mode=self.sampling_mode,
             bnb_b=self.bnb_b,
             bsr_bands=self.bsr_bands,
             bnb_bands=self.bnb_bands,
-            dataloader_len=len(train_dataloader),
+            dataloader_len=reference_train_steps_per_epoch,
         )
         resolved_b_min_sep_p = None
         if self.sampling_mode == 'b_min_sep' and resolved_bnb_b is not None:
@@ -1115,7 +1132,7 @@ class DifferentiallyPrivateTrainer(Trainer):
             if self.total_steps:
                 bnb_horizon = int(self.total_steps)
             elif self.epochs:
-                bnb_horizon = int(self.epochs) * int(len(train_dataloader))
+                bnb_horizon = int(self.epochs) * int(reference_train_steps_per_epoch)
 
             if bnb_horizon is not None and bnb_horizon < 1:
                 raise ValueError('BNB Toeplitz horizon must be >= 1.')
@@ -1140,8 +1157,8 @@ class DifferentiallyPrivateTrainer(Trainer):
                 poisson_sampling=self.poisson_sampling,
                 sampling_mode=self.sampling_mode,
                 batch_size=int(self.datamodule.batch_size),
-                dataset_size=len(train_dataloader.dataset),
-                dataloader_len=len(train_dataloader),
+                dataset_size=reference_train_split_size,
+                dataloader_len=reference_train_steps_per_epoch,
                 bnb_p=self.bnb_p,
                 bnb_b=self.bnb_b,
                 bsr_bands=self.bsr_bands,
@@ -1898,7 +1915,16 @@ class TrainerFactory:
 
         adapter = TrainerFactory._make_adapter(configuration, device)
 
-        # instantiate a differentialy private trained
+        reference_train_split_size = None
+        if (
+            configuration.command == 'optimize'
+            and configuration.accountant == 'bnb'
+            and configuration.sampling_mode == 'balls_in_bins'
+            and configuration.noise_mechanism in ('bandmf', 'bsr', 'bisr', 'bandinvmf', 'bifr', 'blt')
+        ):
+            reference_train_split_size = datamodule.get_source_train_split_size()
+
+        # instantiate a differentially private trainer
         trainer = DifferentiallyPrivateTrainer(
             model=model,
             optimizer=optimizer,
@@ -1932,6 +1958,7 @@ class TrainerFactory:
             bnb_chunk_size=configuration.bnb_chunk_size,
             bnb_seed=configuration.bnb_seed,
             bnb_calibration_mode=configuration.bnb_calibration_mode,
+            reference_train_split_size=reference_train_split_size,
             # config
             accountant=configuration.accountant,
             secure_mode=configuration.secure_mode,

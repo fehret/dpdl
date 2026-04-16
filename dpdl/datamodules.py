@@ -1,4 +1,5 @@
 import logging
+import math
 from collections import Counter
 from functools import partial
 
@@ -76,6 +77,9 @@ class DataModule:
 
         # The _load_datasets method will fill this
         self.num_classes = None
+
+        # The full training set size, if we have created a validation set
+        self._source_train_split_size = None
 
         # Load datasets to memory
         if torch.distributed.get_rank() == 0:
@@ -167,6 +171,15 @@ class DataModule:
     def get_dataset_size(self, which='train_dataset'):
         dataset = getattr(self, which)
         return len(dataset)
+
+    def get_source_train_split_size(self) -> int:
+        if self._source_train_split_size is not None:
+            return int(self._source_train_split_size)
+
+        if hasattr(self, "_dataset_splits") and "train" in self._dataset_splits:
+            return int(len(self._dataset_splits["train"]))
+
+        return int(len(self.train_dataset))
 
     def set_dataloader(self, name, dataloader):
         self._dataloaders[name] = dataloader
@@ -282,6 +295,9 @@ class DataModule:
 
         # Set dataset label fields based on the training split
         self._set_dataset_label_fields(dataset_splits)
+
+        if 'train' in dataset_splits:
+            self._source_train_split_size = int(len(dataset_splits['train']))
 
         # Make sure the dataset label field is of type ClassLabel
         self._dataset_splits = self._enforce_label_field_type(dataset_splits)
