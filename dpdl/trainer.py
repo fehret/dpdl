@@ -785,8 +785,8 @@ class ClassificationAdapter(TaskAdapter):
         else:
             metrics_to_update = model.train_metrics if model.training else model.valid_metrics
 
-        preds = torch.argmax(forward_output, dim=1)
-        metrics_to_update.update(preds, y)
+        #preds = torch.argmax(forward_output, dim=1)
+        metrics_to_update.update(forward_output, y)
 
 
 class LanguageModelAdapter(TaskAdapter):

@@ -165,6 +165,7 @@ class Configuration(BaseModel):
     predict_dataset_split: Optional[str] = 'test'
     prediction_save_gradient_data: Optional[bool] = False
     load_in_4bit: bool = False
+    metrics: Optional[List[str]] = ['MulticlassAccuracy', 'MulticlassAccuracyWithMicro', 'MulticlassAccuracyPerClass']
 
     class Config:
         # Fix Pydantic warning:
@@ -239,6 +240,7 @@ class Configuration(BaseModel):
             ('Dataset imbalance factor', self.imbalance_factor),
             ('Dataset imbalance reverse', self.imbalance_reverse),
             ('Cache dataset transforms', self.cache_dataset_transforms),
+            ('Metrics', self.metrics),
             ('Validation size', self.validation_size),
             ('Test size', self.test_size),
             ('Physical batch size', self.physical_batch_size),
@@ -316,6 +318,8 @@ class Configuration(BaseModel):
 class ConfigurationManager:
     def __init__(self, cli_params: dict):
         self._cli_params = dict(cli_params)
+
+        print(self._cli_params)
         self.command = cli_params['command']
 
         self.configuration = Configuration(**cli_params)

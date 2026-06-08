@@ -9,10 +9,15 @@ import torchmetrics
 log = logging.getLogger(__name__)
 
 def _get_classification_metrics(
+    additional_metrics: list,
     num_classes: int,
     sync: bool,
     with_confusion_matrix: bool,
 ) -> torchmetrics.MetricCollection:
+
+    defaults = {'MulticlassAccuracy', 'MulticlassAccuracyWithMicro', 'MulticlassAccuracyPerClass'}
+    additional_metrics = set(additional_metrics) - defaults
+    
     # NB: If `sync_on_compute` is enabled, this breaks
     # distributed training. If this needs to be enabled,
     # then we also need to actually run the validation on
@@ -34,6 +39,11 @@ def _get_classification_metrics(
             sync_on_compute=sync,
         ),
     }
+
+    
+    custom_metrics = dict([(k, getattr(torchmetrics.classification, k)(num_classes=num_classes, sync_on_compute=sync)) for k in additional_metrics])
+    
+    metrics.update(custom_metrics)    
 
     if with_confusion_matrix:
         metrics['ConfusionMatrix'] = torchmetrics.ConfusionMatrix(
@@ -120,16 +130,19 @@ class MetricsFactory:
                 raise ValueError('num_classes required for classification tasks')
 
             train = _get_classification_metrics(
+                additional_metrics=configuration.metrics,
                 num_classes=num_classes,
                 sync=train_sync,
                 with_confusion_matrix=False,
             )
             valid = _get_classification_metrics(
+                additional_metrics=configuration.metrics,
                 num_classes=num_classes,
                 sync=eval_sync,
                 with_confusion_matrix=False,
             )
             test = _get_classification_metrics(
+                additional_metrics=configuration.metrics,
                 num_classes=num_classes,
                 sync=eval_sync,
                 with_confusion_matrix=True,

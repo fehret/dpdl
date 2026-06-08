@@ -25,6 +25,10 @@ from .utils import seed_everything
 
 log = logging.getLogger(__name__)
 
+def str_to_list(value: str) -> list[str]:
+    return value.split(",")
+
+
 
 def _format_validation_error(exc: ValidationError) -> str:
     """
@@ -614,6 +618,15 @@ def cli(
                 rich_help_panel='Prediction options',
             )
         ] = 'test',
+        metrics: Annotated[
+                list,
+                typer.Option(
+                    '--metrics',
+                    help='Metrics to use for validation',
+                    rich_help_panel='Training options',
+                    parser=str_to_list
+                )
+            ] = 'MulticlassAccuracy,MulticlassAccuracyWithMicro,MulticlassAccuracyPerClass',
     ):
 
     # Map from commands to functions

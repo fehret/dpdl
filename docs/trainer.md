@@ -1,6 +1,6 @@
 # Trainer and DifferentiallyPrivateTrainer
 
-This document summarizes how DPDL's trainers manage training, including hanling of data, models, and optimization.
+This document summarizes how DPDL's trainers manage training, including handling of data, models, and optimization.
 We keep the documentation intentionally brief and point to the relevant source files for deeper understanding.
 
 Relevant sources:
@@ -23,6 +23,8 @@ DPDL uses two trainer paths:
 We support [torchmetrics](https://github.com/Lightning-AI/torchmetrics) through the [metrics module](../dpdl/metrics_factory.py).
 
 Metrics live in the [model](../dpdl/models/model_base.py) (`train_metrics`, `valid_metrics`, `test_metrics`) and the Trainer(s) update them during different training phases.
+We also support specifiying custom metrics to be calculated via the `metrics` command line option.
+The value is expected to be a comma-separated list of torchmetrics 
 
 ## Task adapters
 
