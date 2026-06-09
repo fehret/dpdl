@@ -6,7 +6,7 @@
   <b>Experiment framework for Differentially Private Deep Learning</b>
 </h1>
 
-## Installation and usage
+## Installation and first steps
 
 ### Prerequisites
 
@@ -64,13 +64,12 @@ To run GPU smoke tests (requires CUDA and a visible GPU):
 pytest -m gpu
 ```
 
-### Command line usage
+### Example usage
 
 The entry point is [run.py](run.py) (also installed as the `dpdl` CLI).
 
-### Example usage
-
 At minimum, specify `--epochs` (or `--use-steps` with `--total-steps`).
+See also the [detailed description](docs/epochs-vs-steps.md) of the distinction.
 
 Real-world example (CIFAR-10 + ResNetV2; downloads data and weights):
 
@@ -78,27 +77,121 @@ Real-world example (CIFAR-10 + ResNetV2; downloads data and weights):
 dpdl train --epochs 10 --dataset-name uoft-cs/cifar10 --model-name resnetv2_50x1_bit.goog_in21k --device auto
 ```
 
-Quick CPU sanity check (no downloads; uses the fake dataset):
+## How to use?
 
-```bash
-DPDL_FAKE_DATASET=1 dpdl train --epochs 1 --dataset-name fake --model-name resnet18 --device cpu --batch-size 64 --physical-batch-size 32 --num-workers 0
-```
-
-## Architecture
-
-![DPDL Architecture](images/dpdl-architecture.svg)
-
-### How to use?
-
-#### Command line help
+### Settings
 
 Run `dpdl --help` (or `python run.py --help`).
 
 ![](images/usage.png)
 
+### Training
+
+You can use the framework to train models with or without privacy enabled.
+
+The results will be stored in a dedicated experiment folder that is placed in the logs folder.
+Read more about this in the [experiment directory documentation](docs/experiment-directory.md).
+
+Training is done in a private manner by default.
+The privacy-related command line options are listed in the 'Opacus options' section of the help screen.
+To train a model without it, simply add the `--no-privacy` command line switch.
+
+Experiments on varying parameters can be set up by creating a bash script, like so:
+
+```
+#!/bin/bash
+###############################
+### Experiment: model-variation
+###############################
+
+# Base configurations
+EXPERIMENT="model-variation"
+LOG_DIR="./experiments/$EXPERIMENT/data"
+
+# Experiment parameters
+MODELS=("vit_base_patch16_224.augreg_in21k" "resnetv2_50x1_bit.goog_in21k")
+
+# Loop over configurations
+for model in "${MODELS[@]}"
+do
+    EXPERIMENT_SETTING="${model}"
+
+    python run.py train \
+        --model-name $model \
+        --dataset-name uoft-cs/cifar10 \
+        --subset-size 1.0 \
+        --num-classes 10 \
+        --batch-size 1024 \
+        --target-epsilon 1 \
+        --experiment-name $EXPERIMENT_SETTING \
+        --log-dir $LOG_DIR \
+        --privacy \
+        --overwrite-experiment
+done
+```
+
+### Hyperparameter optimization
+
+DPDL also offers the possibility of optimizing hyperparameters for a given configuration.
+See the detailed guide: [docs/hyperparameter-optimization.md](docs/hyperparameter-optimization.md).
+Again, the specifics of the [experiment directory](docs/experiment-directory.md) apply.
+
+Simple example (optimize learning rate and batch size):
+
+```
+dpdl optimize --target-hypers learning_rate --target-hypers batch_size --n-trials 20 --optuna-config conf/optuna_hypers.conf
+```
+
+You can combine this with the aforementioned bash script of course, to run parameter impact studies for optimized hyperparameters.
+The bash script displayed above could then be changed to:
+
+```
+#!/bin/bash
+#########################################
+### Experiment: optimized-model-variation
+#########################################
+
+# Base configurations
+EXPERIMENT="optimized-model-variation"
+LOG_DIR="./experiments/$EXPERIMENT/data"
+OPTUNA_JOURNAL="$LOG_DIR/optuna.journal"
+OPTUNA_CONFIG="conf/optuna_hypers-subset1.0.conf"
+
+# Experiment parameters
+MODELS=("vit_base_patch16_224.augreg_in21k" "resnetv2_50x1_bit.goog_in21k")
+
+# Loop over configurations
+for model in "${MODELS[@]}"
+do
+    EXPERIMENT_SETTING="${model}"
+
+    
+
+    python run.py optimize \
+                    --model-name $model \
+                    --dataset-name uoft-cs/cifar10 \
+                    --subset-size 1.0 \
+                    --num-classes 10 \
+                    --batch-size 1024 \
+                    --target-hypers epochs \
+                    --target-hypers learning_rate \
+                    --target-hypers max_grad_norm \
+                    --target-epsilon 1 \
+                    --n-trials 20 \
+                    --optuna-config $OPTUNA_CONFIG \
+                    --optuna-target-metric MulticlassAccuracy \
+                    --optuna-direction maximize \
+                    --experiment-name $EXPERIMENT_NAME \
+                    --log-dir $LOG_DIR \
+                    --privacy
+                    --optuna-journal $OPTUNA_JOURNAL \
+                    --overwrite-experiment
+done
+```
+
 ### Creating a Slurm script
 
-There is a tool for creating Slurm run scripts for LUMI
+We also provide a tool for creating Slurm run scripts for LUMI
 
 ```
 $ bin/create-run-script.sh
@@ -119,15 +212,7 @@ Example:
   bin/create-run-script.sh run.sh project_462000213 small-g 1
 ```
 
-### Training under DP
-
-Check out [an example](experiments/00-experiment-batch-size-variation/scripts/run.sh)
-
-### Training without DP
-
-Check [an example](experiments/06-few-shot-from-scratch-non-dp/scripts/run.sh)
-
-## High-level architecture
+## High-level architecture & Customization
 
 ![DPDL Architecture](images/dpdl-architecture.svg)
 
@@ -137,29 +222,27 @@ The entrypoint [run.py](run.py) provides a CLI using Python's Typer module.
 
 ### Command-line interface
 
-The CLI implementation is in [dpdl/cli.py](dpdl/cli.py)
+The CLI implementation is in [dpdl/cli.py](dpdl/cli.py).
+
+If you need to implement additional command line options, start there.
 
 ### Training
 
-The CLI calls the `fit` method of [trainer](dpdl/trainer.py) 
+The CLI calls the `fit` method of [trainer](dpdl/trainer.py).
+
+A detailed explanation can be found in the [Trainer documentation](docs/trainer.md).
+
+The results are stored in the [experiment directory](docs/experiment-directory.md).
 
 ### Hyperparameter optimization
 
 The CLI calls the `optimize_hypers` method of [hyperparameteroptimizer](dpdl/hyperparameteroptimizer.py).
 
-The ranges/options for the different hyperparameters is in `conf/optuna_hypers.conf`.
-
 See the detailed guide: [docs/hyperparameter-optimization.md](docs/hyperparameter-optimization.md).
-
-Example (optimize learning rate and batch size):
-
-```
-dpdl optimize --target-hypers learning_rate --target-hypers batch_size --n-trials 20 --optuna-config conf/optuna_hypers.conf
-```
 
 ### Callbacks
 
-The system provides a flexible [callback system](dpdl/callbacks.py).
+The system provides a flexible [callback system](docs/callbacks.md).
 
 ### Add a new dataset?
 
@@ -169,11 +252,19 @@ NB: The code currently should support all Huggingface image datasets by using, f
 
 ### Add a new model?
 
-Create a new model in `dpdl/models` and add it to [models.py](dpdl/models.py).
+Follow the steps detailed in the [model documentation](docs/models.md).
 
 ### Add a new optimizer?
 
 Add a new optimizer in [optimizers](dpdl/optimizers.py).
+
+## Something broken or missing?
+
+Check for known issues and fixes in the [troubleshoot docs](docs/troubleshoot.md).
+
+If the issue persists, check if it is a known issue via the issue tracker and create a bug report otherwise.
+
+We also welcome contributions, so if you have a fix for a problem or a useful feature, fork the repo and open a pull request with your changes.
 
 ## Acknowledgements
 
