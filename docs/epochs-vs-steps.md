@@ -1,7 +1,7 @@
 # Epochs vs steps, rounding errors in logging, and sample-rate rounding
 
 DPDL supports both epoch-based and step-based training.
-Under the hood, Opacus uses Poisson sampling, so the number of optimizer updates per epoch is depends from the sampling scheme.
+Under the hood, Opacus uses Poisson sampling, so the number of optimizer updates per epoch is dependent on the sampling scheme.
 This section documents how `--use-steps`, `--epochs`, and `--total-steps` interact, why rounding appears in logs, and why this mirrors Opacus behavior.
 
 We will use `S` for steps, `N` for the size of the dataset, `B` for batch sizes, `E` for epochs.

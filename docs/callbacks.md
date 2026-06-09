@@ -20,7 +20,7 @@ Callbacks receive events for both:
 1) Subclass `Callback` and override only the hooks you need.
 2) If you need step count, override `on_train_batch_end`, and call `super()` to keep `global_step` in sync.
 3) Use `self._is_global_zero()` to avoid duplicated logging in DDP.
-4) Register your callback in `CallbackFactory.get_callbacks()` and add CLI flag for it in .
+4) Register your callback in `CallbackFactory.get_callbacks()` .
 
 Minimal example:
 
