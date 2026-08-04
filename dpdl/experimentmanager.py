@@ -156,6 +156,30 @@ def _log_git_hash(config_manager):
         git_hash = _get_git_hash()
         fh.write(str(git_hash) + '\n')
 
+def log_parameter_counts(config_manager, counts):
+    log_dir = config_manager.configuration.log_dir
+    experiment_name = config_manager.configuration.experiment_name
+    full_log_dir = pathlib.Path(f'{log_dir}/{experiment_name}')
+
+    with safe_open(full_log_dir / 'parameter_counts.json', 'w') as fh:
+        json.dump(counts, fh)
+
+    with safe_open(full_log_dir / 'parameter_counts.txt', 'w') as fh:
+        for key, value in counts.items():
+            fh.write(f'{key}: {value:,d}\n')
+
+def log_dataset_sizes(config_manager, sizes):
+    log_dir = config_manager.configuration.log_dir
+    experiment_name = config_manager.configuration.experiment_name
+    full_log_dir = pathlib.Path(f'{log_dir}/{experiment_name}')
+
+    with safe_open(full_log_dir / 'dataset_sizes.json', 'w') as fh:
+        json.dump(sizes, fh)
+
+    with safe_open(full_log_dir / 'dataset_sizes.txt', 'w') as fh:
+        for split, size in sizes.items():
+            fh.write(f'{split}: {size:,d}\n')
+
 def log_runtime(config_manager, start_time, end_time):
     elapsed = end_time - start_time
     elapsed_timedelta = datetime.timedelta(seconds=elapsed)

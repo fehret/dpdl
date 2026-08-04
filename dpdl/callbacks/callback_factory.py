@@ -16,6 +16,7 @@ from .debug import DebugProbeCallback
 from .epoch_stats import RecordEpochStatsCallback
 from .gradient_proportion import RecordClippedProportionsPerClassCallback
 from .gradient_stats import RecordGradientStatisticsCallback
+from .optimizer_stats import RecordOptimizerStatsCallback
 from .per_class_accuracy import RecordPerClassAccuracyCallback
 from .record_losses import RecordLossesByEpochCallback, RecordTrainLossByStepCallback
 from .record_accuracy import RecordAccuracyByEpochCallback
@@ -106,6 +107,14 @@ class CallbackFactory:
         if configuration.record_snr:
             callbacks.append(
                 RecordSNRCallback(
+                    log_dir=full_log_dir,
+                    max_grad_norm=hyperparams.max_grad_norm,
+                )
+            )
+
+        if configuration.record_optimizer_stats:
+            callbacks.append(
+                RecordOptimizerStatsCallback(
                     log_dir=full_log_dir,
                     max_grad_norm=hyperparams.max_grad_norm,
                 )

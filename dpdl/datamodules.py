@@ -168,6 +168,18 @@ class DataModule:
         dataset = getattr(self, which)
         return len(dataset)
 
+    def get_dataset_sizes(self):
+        sizes = {}
+        for split, attr in (
+            ('train', 'train_dataset'),
+            ('validation', 'val_dataset'),
+            ('test', 'test_dataset'),
+        ):
+            dataset = getattr(self, attr, None)
+            if dataset is not None:
+                sizes[split] = len(dataset)
+        return sizes
+
     def set_dataloader(self, name, dataloader):
         self._dataloaders[name] = dataloader
 

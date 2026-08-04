@@ -60,5 +60,6 @@ class MyCallback(Callback):
 - [`RecordLossesByEpochCallback`](../dpdl/callbacks/record_losses.py): writes **per-epoch** train/validation loss to CSV.
 - [`RecordAccuracyByEpochCallback`](../dpdl/callbacks/record_accuracy.py): logs train/validation accuracy per epoch.
 - [`RecordPerClassAccuracyCallback`](../dpdl/callbacks/per_class_accuracy.py): records per-class accuracy over time.
+- [`RecordOptimizerStatsCallback`](../dpdl/callbacks/optimizer_stats.py): writes per-step gradient-norm quantiles, clipping/retained-weight stats, and Adam update statistics to CSV.
 - [`CheckpointCallback`](../dpdl/callbacks/checkpoint.py): saves checkpoints and validation metrics every N steps.
 - [`DebugProbeCallback`](../dpdl/callbacks/debug.py): prints every hook call to help verify event ordering.

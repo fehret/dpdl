@@ -31,6 +31,65 @@ def print_trainable_modules(model: torch.nn.Module):
             log.info(module_name)
 
 
+def _get_head_module(model: torch.nn.Module):
+    try:
+        return model.get_classifier()
+    except (AttributeError, NotImplementedError):
+        return None
+
+
+def count_parameters(model: torch.nn.Module) -> dict:
+    """
+    Compute a breakdown of model parameter counts.
+
+    Definitions:
+      P_backbone : parameters in the backbone (base model without head / adapters)
+      P_frozen   : frozen parameters of the effective model (P_model - d_train)
+      P_model    : parameters of the effective model (backbone + PEFT adapters + head)
+      d_peft     : trainable PEFT parameters (d_train - d_head)
+      d_head     : trainable parameters in the classification head
+      d_train    : all trainable parameters (d_peft + d_head)
+    """
+    total = 0
+    trainable = 0
+    for param in model.parameters():
+        num = param.numel()
+        total += num
+        if param.requires_grad:
+            trainable += num
+
+    # Identify the classification head, if the model exposes one.
+    head_module = _get_head_module(model)
+    if head_module is not None:
+        head_total = sum(p.numel() for p in head_module.parameters())
+        head_trainable = sum(p.numel() for p in head_module.parameters() if p.requires_grad)
+    else:
+        head_total = 0
+        head_trainable = 0
+
+    # PEFT adapter weights (e.g. LoRA) are added on top of the backbone
+    adapter_total = sum(p.numel() for name, p in model.named_parameters() if 'lora_' in name)
+
+    # PEFT's retains a copy of the head, which we exclude from reporting, as no computations are ever done with it
+    frozen_head_duplicate = head_total - head_trainable
+
+    d_head = head_trainable
+    d_train = trainable
+    d_peft = d_train - d_head
+    p_model = total - frozen_head_duplicate
+    p_frozen = p_model - d_train
+    p_backbone = total - head_total - adapter_total
+
+    return {
+        'P_backbone': p_backbone,
+        'P_frozen': p_frozen,
+        'P_model': p_model,
+        'd_peft': d_peft,
+        'd_head': d_head,
+        'd_train': d_train,
+    }
+
+
 class PeftFactory:
     @staticmethod
     def get_peft_model(model: torch.nn.Module, configuration: Configuration, checkpoints_dir: str = None):

@@ -11,7 +11,9 @@ from pathlib import Path
 
 from .configurationmanager import ConfigurationManager
 from .experimentmanager import (
+    log_dataset_sizes,
     log_final_epsilon,
+    log_parameter_counts,
     log_runtime,
     log_test_metrics,
     log_train_metrics,
@@ -410,6 +412,13 @@ def cli(
                 rich_help_panel='Logging options',
             )
         ] = False,
+        record_optimizer_stats: Annotated[
+            Optional[bool],
+            typer.Option(
+                help='Record per-step gradient-norm and Adam statistics',
+                rich_help_panel='Logging options',
+            )
+        ] = False,
         record_llm_samples: Annotated[
             Optional[bool],
             typer.Option(
@@ -677,6 +686,11 @@ def run_train(config_manager: ConfigurationManager) -> Optional[Path]:
     seed_everything(config_manager.configuration.seed)
 
     trainer = TrainerFactory.get_trainer(config_manager)
+
+    # Record model parameter count and dataset sizes
+    if rank_zero:
+        log_parameter_counts(config_manager, trainer.count_parameters())
+        log_dataset_sizes(config_manager, trainer.get_datamodule().get_dataset_sizes())
 
     start_time = time.time()
     trainer.fit()

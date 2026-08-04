@@ -130,6 +130,7 @@ class Configuration(BaseModel):
     model_weights_path: Optional[str] = None
     record_clipping: Optional[bool] = False
     record_snr: Optional[bool] = False
+    record_optimizer_stats: Optional[bool] = False
     record_llm_samples: Optional[bool] = False
     record_gradient_norms: Optional[bool] = False
     record_gradient_norms_quantiles: Optional[List[int]] = [25, 50, 75]
@@ -244,6 +245,7 @@ class Configuration(BaseModel):
             ('Path for saving/loding model weights', self.model_weights_path),
             ('Record clipping stats (MSE)', self.record_clipping),
             ('Record signal-to-noise ratio', self.record_snr),
+            ('Record optimizer (gradient & Adam) stats', self.record_optimizer_stats),
             ('Record LLM samples', self.record_llm_samples),
             ('Record gradient norms', self.record_gradient_norms),
             ('Record gradient norms quantiles', self.record_gradient_norms_quantiles),

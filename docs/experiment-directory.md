@@ -25,6 +25,18 @@ And conversely, unfinished experiments can be found by looking for experiment di
 
 ## Train command (`dpdl train`)
 
+Written before training starts:
+- `parameter_counts.txt` and `parameter_counts.json`: model parameter count breakdown
+- `dataset_sizes.txt` and `dataset_sizes.json`: number of examples per split
+
+The parameter counts are:
+- `P_backbone`: parameters in the backbone (base model without head or adapters)
+- `P_frozen`: parameters that remain frozen during training
+- `P_model`: all instantiated parameters (backbone + PEFT adapters + head)
+- `d_peft`: trainable PEFT parameters (`d_train - d_head`)
+- `d_head`: trainable parameters in the classification head
+- `d_train`: all trainable parameters (`d_peft + d_head`)
+
 Written at the end of training:
 - `test_metrics`: test loss + metrics
 - `final_epsilon`: the resulting epsilon (only in DP mode)
