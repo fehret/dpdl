@@ -24,6 +24,7 @@ class _Trainer:
     def validate(self, enable_callbacks=False):
         assert enable_callbacks is False
         self.validation_calls += 1
+        return 0.0, self.model.valid_metrics.compute()
 
 
 def test_saves_model_and_optimizer_at_exact_steps(tmp_path, monkeypatch):
