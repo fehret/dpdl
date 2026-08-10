@@ -93,11 +93,7 @@ class Trainer:
             self.fit_one_epoch(epoch)
 
             if self.validation_frequency and epoch % self.validation_frequency == 0:
-                if torch.distributed.get_rank() == 0:
-                    self.validate(epoch)
-
-                # other ranks will wait for validation
-                torch.distributed.barrier()
+                self.validate(epoch)
 
     def _fit_total_steps(self):
         step = 0
@@ -123,11 +119,7 @@ class Trainer:
                     virtual_epoch += 1
 
                     if self.validation_frequency and virtual_epoch % self.validation_frequency == 0:
-                        if torch.distributed.get_rank() == 0:
-                            self.validate(virtual_epoch)
-
-                        # other ranks will wait for validation
-                        torch.distributed.barrier()
+                        self.validate(virtual_epoch)
 
                     # are we finished?
                     if step >= self.total_steps:
@@ -222,7 +214,7 @@ class Trainer:
         return peft.count_parameters(self._unwrap_model())
 
     def _evaluate(self, mode, epoch=None, enable_callbacks=True):
-        if enable_callbacks:
+        if enable_callbacks and self._is_global_zero():
             self.callback_handler.call(f'on_{mode}_epoch_start', self, epoch)
 
         self.model.eval()
@@ -248,24 +240,41 @@ class Trainer:
 
         metrics_evaluator.reset()
 
+        # Weight each batch by the number of terms its mean loss averages over 
+        # (examples for classification, non-ignored tokens for LM), 
+        # so the reduction is a per-item mean rather than a mean of per-batch means
+        loss_sum = 0.0
+        sample_count = 0
+
         for batch_idx, batch in enumerate(dataloader):
-            loss = self._evaluate_one_batch(mode, batch_idx, batch, enable_callbacks, metrics_evaluator)
-            evaluation_loss += loss
+            loss, weight = self._evaluate_one_batch(mode, batch_idx, batch, enable_callbacks, metrics_evaluator)
+            loss_sum += loss * weight
+            sample_count += weight
 
-        evaluation_loss /= len(dataloader)
+        # all_reduce the weighted sum and the count separately, then divide once
+        # so the global loss is sum(loss*n) / sum(n) across every rank
+        totals = torch.tensor([loss_sum, float(sample_count)], device=self.device)
+        if torch.distributed.is_available() and torch.distributed.is_initialized():
+            torch.distributed.all_reduce(totals)
+        evaluation_loss = (totals[0] / totals[1]).item() if totals[1] > 0 else 0.0
 
+        # metrics_evaluator.compute() performs an all_reduce internally when
+        # sync_on_compute=True, so every rank gets the globally aggregated values
         metrics = metrics_evaluator.compute()
 
         torch.set_grad_enabled(True)
         self.model.train()
 
-        if enable_callbacks:
-            self.callback_handler.call(f'on_{mode}_epoch_end', self, epoch, metrics)
+        # Callbacks run on rank 0 only, so they cannot reduce a loss themselves
+        # Hand them the already-reduced one
+        if enable_callbacks and self._is_global_zero():
+            self.callback_handler.call(f'on_{mode}_epoch_end', self, epoch, metrics, evaluation_loss)
 
         return evaluation_loss, metrics
 
     def _evaluate_one_batch(self, mode, batch_idx, batch, enable_callbacks, metrics_evaluator):
-        if enable_callbacks:
+        # Eval batch callbacks run on rank 0 only
+        if enable_callbacks and self._is_global_zero():
             self.callback_handler.call(f'on_{mode}_batch_start', self, batch_idx, batch)
 
         X, y = batch
@@ -273,6 +282,10 @@ class Trainer:
 
         forward_output = self.adapter.forward(self._unwrap_model(), (X, y))
         loss = self.adapter.compute_loss(self._unwrap_model(), (X, y), forward_output)
+
+        # Exact denominator the mean loss is divided by, 
+        # so _evaluate can reduce to a true per-item mean across batches and ranks.
+        weight = self.adapter.loss_denominator(self._unwrap_model(), (X, y), forward_output)
         self.adapter.update_metrics(
             self._unwrap_model(),
             (X, y),
@@ -280,10 +293,10 @@ class Trainer:
             metrics=metrics_evaluator,  # record into the provided evaluator
         )
 
-        if enable_callbacks:
+        if enable_callbacks and self._is_global_zero():
             self.callback_handler.call(f'on_{mode}_batch_end', self, batch_idx, batch, loss.item())
 
-        return loss.item()
+        return loss.item(), weight
 
     def _unwrap_model(self):
         m = self.model
@@ -296,6 +309,12 @@ class Trainer:
 
         return m  # ModelBase
 
+    @staticmethod
+    def _is_global_zero() -> bool:
+        # Only rank zero owns output files, but every rank participates in reductions.
+        if torch.distributed.is_available() and torch.distributed.is_initialized():
+            return torch.distributed.get_rank() == 0
+        return True
 
     def _calculate_steps_per_epoch(self):
         N = len(self.datamodule.get_dataloader('train').dataset)
@@ -602,13 +621,7 @@ class DifferentiallyPrivateTrainer(Trainer):
                     self._handle_virtual_epoch_end(virtual_epoch)
 
                     if self.validation_frequency and virtual_epoch % self.validation_frequency == 0:
-                        # validate only on rank 0. no need to do distributed here,
-                        # the computation is not heavy because we don't need gradients.
-                        if torch.distributed.get_rank() == 0:
-                            self.validate(virtual_epoch)
-
-                        # other ranks will wait for validation
-                        torch.distributed.barrier()
+                        self.validate(virtual_epoch)
 
                     if step < self.total_steps:
                         virtual_epoch += 1
@@ -742,6 +755,9 @@ class TaskAdapter:
     def compute_loss(self, model, batch, forward_output, normalize_by: int | None = None):
         raise NotImplementedError
 
+    def loss_denominator(self, model, batch, forward_output) -> int:
+        raise NotImplementedError
+
     def update_metrics(self, model, batch, forward_output, metrics = None):
         raise NotImplementedError
 
@@ -766,6 +782,11 @@ class ClassificationAdapter(TaskAdapter):
             loss = loss / normalize_by
 
         return loss
+
+    def loss_denominator(self, model, batch, forward_output) -> int:
+        # No ignored targets in classification, so the mean divides by batch size.
+        _, y = batch
+        return y.shape[0]
 
     def update_metrics(self, model, batch, forward_output, metrics = None):
         _, y = batch
@@ -802,6 +823,13 @@ class LanguageModelAdapter(TaskAdapter):
             loss = loss / normalize_by
 
         return loss
+
+    def loss_denominator(self, model, batch, forward_output) -> int:
+        # criterion averages over non-ignored, shifted targets; mirror the shift
+        # in shift_and_flatten (drop the first column) and count what remains.
+        _, y = batch
+        ignore_index = getattr(model.criterion, 'ignore_index', -100)
+        return int((y[:, 1:] != ignore_index).sum())
 
     def update_metrics(self, model, batch, forward_output, metrics = None):
         _, y = batch

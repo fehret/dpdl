@@ -727,13 +727,18 @@ def run_train(config_manager: ConfigurationManager) -> Optional[Path]:
         if rank_zero:
             log_train_metrics(config_manager, train_metrics, train_loss)
 
+    
     # Keep the test split closed during hyperparameter selection when requested.
-    if rank_zero:
-        if not config_manager.configuration.skip_test:
+    if not config_manager.configuration.skip_test:
+        if rank_zero:
             log.info('Evaluating on test set..')
-            test_loss, test_metrics = trainer.test()
 
+        test_loss, test_metrics = trainer.test()
+
+        if rank_zero:
             log_test_metrics(config_manager, test_metrics, test_loss)
+
+    if rank_zero:
         log_runtime(config_manager, start_time, end_time)
 
         # We need to have an option to disable this, as it might fail due to an OOM

@@ -40,7 +40,7 @@ class DebugProbeCallback(Callback):
     def on_validation_epoch_start(self, trainer, epoch):
         log.info(f"[DEBUG - RANK {torch.distributed.get_rank()}] on_validation_epoch_start")
 
-    def on_validation_epoch_end(self, trainer, epoch, metrics):
+    def on_validation_epoch_end(self, trainer, epoch, metrics, loss=None):
         log.info(f"[DEBUG - RANK {torch.distributed.get_rank()}] on_validation_epoch_end")
 
     def on_validation_batch_start(self, trainer, batch_idx, batch):
@@ -52,7 +52,7 @@ class DebugProbeCallback(Callback):
     def on_test_epoch_start(self, trainer, epoch):
         log.info(f"[DEBUG - RANK {torch.distributed.get_rank()}] on_test_epoch_start")
 
-    def on_test_epoch_end(self, trainer, epoch, metrics):
+    def on_test_epoch_end(self, trainer, epoch, metrics, loss=None):
         log.info(f"[DEBUG - RANK {torch.distributed.get_rank()}] on_test_epoch_end")
 
     def on_test_batch_start(self, trainer, batch_idx, batch):

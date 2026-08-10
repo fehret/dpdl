@@ -23,7 +23,7 @@ class Callback:
     def on_train_epoch_start(self, trainer, epoch):
         pass
 
-    def on_train_epoch_end(self, trainer, epoch, epoch_loss):
+    def on_train_epoch_end(self, trainer, epoch, metrics):
         pass
 
     def on_train_batch_start(self, trainer, batch_idx, batch):
@@ -38,7 +38,7 @@ class Callback:
     def on_validation_epoch_start(self, trainer, epoch):
         pass
 
-    def on_validation_epoch_end(self, trainer, epoch, metrics):
+    def on_validation_epoch_end(self, trainer, epoch, metrics, loss=None):
         pass
 
     def on_validation_batch_start(self, trainer, batch_idx, batch):
@@ -50,7 +50,7 @@ class Callback:
     def on_test_epoch_start(self, trainer, epoch):
         pass
 
-    def on_test_epoch_end(self, trainer, epoch, metrics):
+    def on_test_epoch_end(self, trainer, epoch, metrics, loss=None):
         pass
 
     def on_test_batch_start(self, trainer, batch_idx, batch):

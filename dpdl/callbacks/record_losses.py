@@ -43,7 +43,6 @@ class RecordLossesByEpochCallback(Callback):
         self.log_dir = log_dir
         device = device or torch.device('cuda')
         self.train_loss = torchmetrics.aggregation.MeanMetric().to(device)
-        self.evaluation_loss = torchmetrics.aggregation.MeanMetric(sync_on_compute=False).to(device)
         self.train_losses = []
         self.val_losses = []
 
@@ -68,13 +67,8 @@ class RecordLossesByEpochCallback(Callback):
         train_loss = self.train_loss.compute().item()
         self.train_losses.append(train_loss)
 
-    def on_validation_epoch_end(self, trainer, epoch, metrics):
-        val_loss = self.evaluation_loss.compute().item()
-        self.evaluation_loss.reset()
-        self.val_losses.append(val_loss)
-
-    def on_validation_batch_end(self, trainer, batch_idx, batch, loss):
-        self.evaluation_loss.update(loss)
+    def on_validation_epoch_end(self, trainer, epoch, metrics, loss=None):
+        self.val_losses.append(loss)
 
     def on_train_end(self, trainer):
         if self._is_global_zero():

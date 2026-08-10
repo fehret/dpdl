@@ -221,15 +221,18 @@ class DataModule:
 
             if torch.distributed.get_rank() == 0:
                 log.info('Creating fairness imbalanced train set..')
-                self.train_dataset = self._get_fairness_imbalanced_subset(
-                    self.train_dataset
-                )
+
+            # we need the dataset creation on all ranks, otherwise other ranks work on the full dataset
+            self.train_dataset = self._get_fairness_imbalanced_subset(
+                self.train_dataset
+            )
 
             if torch.distributed.get_rank() == 0:
                 log.info('Creating fairness imbalanced validation set..')
-                self.val_dataset = self._get_fairness_imbalanced_subset(
-                    self.val_dataset
-                )
+
+            self.val_dataset = self._get_fairness_imbalanced_subset(
+                self.val_dataset
+            )
 
             if torch.distributed.get_rank() == 0:
                 log.info(
@@ -484,8 +487,8 @@ class DataModule:
         # batch size to avoid running out of host memory.
         self._dataloaders['train_eval'] = torch.utils.data.DataLoader(
             self.train_dataset.with_format('torch'),
+            sampler=self.train_eval_sampler,
             batch_size=self.physical_batch_size,
-            shuffle=False,
             num_workers=self.num_workers,
             pin_memory=False,
             collate_fn=self._dataloaders['train'].collate_fn,
@@ -525,8 +528,27 @@ class DataModule:
             self.train_sampler = None
             self.local_batch_size = self.batch_size
 
-        # we will validate and test only on rank 0
-        self.val_sampler, self.test_sampler = None, None
+        # All ranks process disjoint shards during validation/test so that
+        # torchmetrics can all_reduce the accumulated state across ranks.
+        # shuffle=False keeps ordering deterministic. 
+        # DistributedSampler may pad the tail by up to (world_size - 1) samples 
+        # when the split is not evenly divisible, which is negligible for large eval set sizes.
+        self.val_sampler = torch.utils.data.distributed.DistributedSampler(
+            self.val_dataset.with_format('torch'), shuffle=False
+        )
+        self.test_sampler = (
+            torch.utils.data.distributed.DistributedSampler(
+                self.test_dataset.with_format('torch'), shuffle=False
+            )
+            if self.test_dataset
+            else None
+        )
+
+        # train_eval is used for _evaluate('train', ...) which also runs on all ranks, 
+        # so it needs a DistributedSampler for the same reason.
+        self.train_eval_sampler = torch.utils.data.distributed.DistributedSampler(
+            self.train_dataset.with_format('torch'), shuffle=False
+        )
 
     def _get_stratified_subset(self, dataset):
         # Split the dataset using `split_seed`
