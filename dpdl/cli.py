@@ -710,7 +710,7 @@ def run_train(config_manager: ConfigurationManager) -> Optional[Path]:
 
     # Record model parameter count and dataset sizes
     if rank_zero:
-        log_parameter_counts(config_manager, trainer.count_parameters())
+        log_parameter_counts(config_manager, trainer.get_parameter_count())
         log_dataset_sizes(config_manager, trainer.get_datamodule().get_dataset_sizes())
 
     start_time = time.time()
