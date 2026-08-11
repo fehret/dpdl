@@ -18,6 +18,7 @@ from .gradient_proportion import RecordClippedProportionsPerClassCallback
 from .gradient_stats import RecordGradientStatisticsCallback
 from .optimizer_stats import RecordOptimizerStatsCallback
 from .per_class_accuracy import RecordPerClassAccuracyCallback
+from .record_epoch_metrics import RecordMetricsByEpochCallback
 from .record_losses import RecordLossesByEpochCallback, RecordTrainLossByStepCallback
 from .record_accuracy import RecordAccuracyByEpochCallback
 from .record_snr import RecordSNRCallback
@@ -96,6 +97,9 @@ class CallbackFactory:
         if configuration.record_loss_by_epoch:
             callbacks.append(RecordLossesByEpochCallback(log_dir=full_log_dir, device=device))
             callbacks.append(RecordAccuracyByEpochCallback(log_dir=full_log_dir))
+
+        if configuration.record_metrics_by_epoch:
+            callbacks.append(RecordMetricsByEpochCallback(log_dir=full_log_dir))
 
         if configuration.record_per_class_accuracy:
             callbacks.append(

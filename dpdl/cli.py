@@ -475,6 +475,13 @@ def cli(
                 rich_help_panel='Logging options',
             )
         ] = False,
+        record_metrics_by_epoch: Annotated[
+            Optional[bool],
+            typer.Option(
+                help='Record train/validation metrics by epoch',
+                rich_help_panel='Logging options',
+            )
+        ] = False,
         record_per_class_accuracy: Annotated[
             Optional[bool],
             typer.Option(

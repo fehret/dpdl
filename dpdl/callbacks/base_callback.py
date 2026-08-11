@@ -23,7 +23,7 @@ class Callback:
     def on_train_epoch_start(self, trainer, epoch):
         pass
 
-    def on_train_epoch_end(self, trainer, epoch, epoch_loss):
+    def on_train_epoch_end(self, trainer, epoch, metrics):
         pass
 
     def on_train_batch_start(self, trainer, batch_idx, batch):
