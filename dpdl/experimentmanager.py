@@ -287,6 +287,18 @@ def log_final_epsilon(config_manager, trainer):
     with safe_open(f'{full_log_dir}/final_epsilon', 'w') as fh:
         fh.write(f'{final_epsilon}\n')
 
+def log_noise_multiplier(config_manager, trainer):
+    if not config_manager.configuration.privacy:
+        return
+
+    log_dir = config_manager.configuration.log_dir
+    experiment_name = config_manager.configuration.experiment_name
+    full_log_dir = pathlib.Path(f'{log_dir}/{experiment_name}')
+
+    noise_multiplier = trainer.get_noise_multiplier()
+    with safe_open(f'{full_log_dir}/noise_multiplier', 'w') as fh:
+        fh.write(f'{noise_multiplier}\n')
+
 def _log_gpus(config_manager):
     log_dir = config_manager.configuration.log_dir
     experiment_name = config_manager.configuration.experiment_name

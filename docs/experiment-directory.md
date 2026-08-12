@@ -40,6 +40,7 @@ The parameter counts are:
 Written at the end of training:
 - `test_metrics`: test loss + metrics
 - `final_epsilon`: the resulting epsilon (only in DP mode)
+- `noise_multiplier`: the DP-SGD noise multiplier (only in DP mode)
 
 If `--save-model` is specified also the resulting model is saved as `final_model.pt`.
 
@@ -66,6 +67,8 @@ Files written:
 - `best-params-raw-idx.json`: raw Optuna params (ordered indices)
 - `best-value`: best objective value (evaluated on **validation** set)
 - `final-metrics`: metrics from the final evaluation round (evaluted on **test** set)
+- `final_epsilon`, resulting epsilon on the final evaluation round
+- `noise_multiplier`: DP-SGD noise multiplier in the final evaluation round
 - `results-and-configuration.json`: combined summary bundle
 - `optuna.conf`: copy of the Optuna search space config
 - `optuna.journal`: Optuna journal for the study

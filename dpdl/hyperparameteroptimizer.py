@@ -13,7 +13,7 @@ from .trainer import TrainerFactory
 from .device import resolve_device
 from .datamodules import DataModuleFactory
 from .configurationmanager import ConfigurationManager
-from .experimentmanager import save_study, log_final_epsilon, save_hpo_metrics
+from .experimentmanager import save_study, log_final_epsilon, log_noise_multiplier, save_hpo_metrics
 
 log = logging.getLogger(__name__)
 
@@ -289,6 +289,7 @@ class HyperparameterOptimizer:
                     log.info(f' - {key}: {value}.')
 
             log_final_epsilon(config_manager, trainer)
+            log_noise_multiplier(config_manager, trainer)
 
             # save model if requested
             if save_model := config_manager.configuration.save_model:

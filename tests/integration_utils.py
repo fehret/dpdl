@@ -223,6 +223,16 @@ def assert_final_epsilon(log_dir: Path) -> None:
     assert epsilon_path.exists(), f'Expected final epsilon file at {epsilon_path}'
 
 
+def assert_final_noise_multiplier(log_dir: Path) -> float:
+    noise_path = log_dir / 'noise_multiplier'
+    assert noise_path.exists(), f'Expected noise multiplier file at {noise_path}'
+    noise_multiplier = float(noise_path.read_text().strip())
+
+    # A target-epsilon run must add noise
+    assert noise_multiplier > 0, f'Expected positive noise multiplier, got {noise_multiplier}'
+    return noise_multiplier
+
+
 def load_expected_losses() -> dict:
     fixture_path = Path(__file__).parent / 'fixtures' / 'expected_losses.json'
     if not fixture_path.exists():
