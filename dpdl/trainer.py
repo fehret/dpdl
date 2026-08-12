@@ -501,8 +501,15 @@ class DifferentiallyPrivateTrainer(Trainer):
         self.datamodule.set_dataloader('train', dp_dataloader)
         self.optimizer = dp_optimizer
 
+        # When target_epsilon is set, Opacus computes the noise multiplier for us; capture the
+        # effective value (also correct for the directly-configured and no-noise paths).
+        self.noise_multiplier = float(dp_optimizer.noise_multiplier)
+
     def get_epsilon(self):
         return self.privacy_engine.get_epsilon(self.target_delta)
+
+    def get_noise_multiplier(self):
+        return self.noise_multiplier
 
     def _unwrap_model(self):
         # the model is wrapped inside Opacus, and Opacus distributed.

@@ -13,6 +13,7 @@ from .configurationmanager import ConfigurationManager
 from .experimentmanager import (
     log_dataset_sizes,
     log_final_epsilon,
+    log_noise_multiplier,
     log_parameter_counts,
     log_runtime,
     log_test_metrics,
@@ -747,6 +748,8 @@ def run_train(config_manager: ConfigurationManager) -> Optional[Path]:
         # error if using very small noise multipliers.
         if not config_manager.configuration.disable_epsilon_logging:
             log_final_epsilon(config_manager, trainer)
+
+        log_noise_multiplier(config_manager, trainer)
 
     saved_model_path = None
 
