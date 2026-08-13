@@ -72,16 +72,10 @@ The entry point is [run.py](run.py) (also installed as the `dpdl` CLI).
 
 At minimum, specify `--epochs` (or `--use-steps` with `--total-steps`).
 
-Real-world example (CIFAR-10 + ResNetV2; downloads data and weights):
+Example with `CIFAR-10` and `ResNetV2`. Data and weights will be downloaded.
 
 ```bash
 dpdl train --epochs 10 --dataset-name uoft-cs/cifar10 --model-name resnetv2_50x1_bit.goog_in21k --device auto
-```
-
-Quick CPU sanity check (no downloads; uses the fake dataset):
-
-```bash
-DPDL_FAKE_DATASET=1 dpdl train --epochs 1 --dataset-name fake --model-name resnet18 --device cpu --batch-size 64 --physical-batch-size 32 --num-workers 0
 ```
 
 ## Architecture
