@@ -8,9 +8,38 @@ import torchvision
 from PIL import Image
 
 from .configurationmanager import Configuration, Hyperparameters
+from .utils import distributed_world_size
 
 log = logging.getLogger(__name__)
 
+
+class DistributedEvalSampler(torch.utils.data.Sampler):
+    """Partition a dataset across ranks for evaluation with no duplication and no dropping: every sample is visited exactly once
+
+    DistributedSampler cannot do this, since drop_last=False pads the tail by repeating samples (double-counting them in the loss and metrics).
+    With drop_last=True it discards the tail.
+    Because _evaluate weights the loss by sample count and reduces once after the loop, unequal shards are safe
+    Not for training: DDP's backward needs even shards.
+    """
+
+    def __init__(self, dataset, num_replicas=None, rank=None):
+        super().__init__()
+        self.num_replicas = num_replicas if num_replicas is not None else distributed_world_size()
+        if rank is None:
+            rank = torch.distributed.get_rank() if (
+                torch.distributed.is_available() and torch.distributed.is_initialized()
+            ) else 0
+        self.rank = rank
+
+        # Produce disjoint shards that unite to the whole dataset,
+        # equal behavior to shuffle=False DistributedSampler with drop_last=True, but without dropping or double-counting.
+        self.indices = list(range(self.rank, len(dataset), self.num_replicas))
+
+    def __iter__(self):
+        return iter(self.indices)
+
+    def __len__(self):
+        return len(self.indices)
 
 
 class DataModule:
@@ -530,25 +559,19 @@ class DataModule:
 
         # All ranks process disjoint shards during validation/test so that
         # torchmetrics can all_reduce the accumulated state across ranks.
-        # shuffle=False keeps ordering deterministic.
-        # DistributedSampler may pad the tail by up to (world_size - 1) samples
-        # when the split is not evenly divisible, which is negligible for large eval set sizes.
-        self.val_sampler = torch.utils.data.distributed.DistributedSampler(
-            self.val_dataset.with_format('torch'), shuffle=False
-        )
+        # DistributedEvalSampler partitions without padding or dropping, so every
+        # sample is evaluated exactly once and the aggregate matches single-rank
+        # evaluation for any split size
+        self.val_sampler = DistributedEvalSampler(self.val_dataset.with_format('torch'))
         self.test_sampler = (
-            torch.utils.data.distributed.DistributedSampler(
-                self.test_dataset.with_format('torch'), shuffle=False
-            )
+            DistributedEvalSampler(self.test_dataset.with_format('torch'))
             if self.test_dataset
             else None
         )
 
         # train_eval is used for _evaluate('train', ...) which also runs on all ranks,
-        # so it needs a DistributedSampler for the same reason.
-        self.train_eval_sampler = torch.utils.data.distributed.DistributedSampler(
-            self.train_dataset.with_format('torch'), shuffle=False
-        )
+        # so it needs an eval sampler for the same reason.
+        self.train_eval_sampler = DistributedEvalSampler(self.train_dataset.with_format('torch'))
 
     def _get_stratified_subset(self, dataset):
         # Split the dataset using `split_seed`
