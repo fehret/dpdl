@@ -108,7 +108,7 @@ def test_non_zero_rank_interval_and_final(tmp_path, monkeypatch):
 
     checkpoint_dir = tmp_path / 'checkpoints'
     assert callback.global_step == 25
-    
+
     # Two interval boundaries (steps 10 and 20) plus the final validate():
     # three validations for all ranks, no files, due to non-zero rank
     assert trainer.validation_calls == 3

@@ -692,7 +692,7 @@ def run_show_layers(config_manager: ConfigurationManager) -> None:
         42,
         torch.nn.MSELoss()
     )
-    
+
     model.show_layers()
 
 
@@ -727,7 +727,6 @@ def run_train(config_manager: ConfigurationManager) -> Optional[Path]:
         if rank_zero:
             log_train_metrics(config_manager, train_metrics, train_loss)
 
-    
     # Keep the test split closed during hyperparameter selection when requested.
     if not config_manager.configuration.skip_test:
         if rank_zero:

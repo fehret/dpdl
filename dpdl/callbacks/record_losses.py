@@ -22,7 +22,10 @@ class RecordTrainLossByStepCallback(Callback):
     def on_train_batch_end(self, trainer, batch_idx, batch, loss, **kwargs):
         super().on_train_batch_end(trainer, batch_idx, batch, loss, **kwargs)
 
-        self.train_losses.append({'step': self.global_step, 'train_loss': loss})
+        # reduce the rank-local loss to a mean loss across all ranks before storing
+        mean_loss = self._mean_across_ranks(loss, trainer.device)
+
+        self.train_losses.append({'step': self.global_step, 'train_loss': mean_loss})
 
     def on_train_end(self, trainer, *args, **kwargs):
         if self._is_global_zero():
@@ -67,7 +70,7 @@ class RecordLossesByEpochCallback(Callback):
         train_loss = self.train_loss.compute().item()
         self.train_losses.append(train_loss)
 
-    def on_validation_epoch_end(self, trainer, epoch, metrics, loss=None):
+    def on_validation_epoch_end(self, trainer, epoch, metrics, loss):
         self.val_losses.append(loss)
 
     def on_train_end(self, trainer):

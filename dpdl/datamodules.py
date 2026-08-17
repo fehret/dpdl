@@ -530,8 +530,8 @@ class DataModule:
 
         # All ranks process disjoint shards during validation/test so that
         # torchmetrics can all_reduce the accumulated state across ranks.
-        # shuffle=False keeps ordering deterministic. 
-        # DistributedSampler may pad the tail by up to (world_size - 1) samples 
+        # shuffle=False keeps ordering deterministic.
+        # DistributedSampler may pad the tail by up to (world_size - 1) samples
         # when the split is not evenly divisible, which is negligible for large eval set sizes.
         self.val_sampler = torch.utils.data.distributed.DistributedSampler(
             self.val_dataset.with_format('torch'), shuffle=False
@@ -544,7 +544,7 @@ class DataModule:
             else None
         )
 
-        # train_eval is used for _evaluate('train', ...) which also runs on all ranks, 
+        # train_eval is used for _evaluate('train', ...) which also runs on all ranks,
         # so it needs a DistributedSampler for the same reason.
         self.train_eval_sampler = torch.utils.data.distributed.DistributedSampler(
             self.train_dataset.with_format('torch'), shuffle=False

@@ -59,7 +59,7 @@ class CheckpointCallback(Callback):
             self.save_checkpoint(trainer, checkpoint_path)
 
     def on_train_batch_end(self, trainer, batch_idx, batch, loss, **kwargs):
-        # Accumulate on every rank, because loss is rank-local 
+        # Accumulate on every rank, because loss is rank-local
         # update() reduces this into the global mean.
         self.interval_loss.update(loss)
         self.global_step += 1

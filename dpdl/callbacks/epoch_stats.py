@@ -67,12 +67,12 @@ class RecordEpochStatsCallback(Callback):
     def on_train_batch_end(self, trainer, batch_idx, batch, loss):
         self.train_loss.update(loss)
 
-    def on_validation_epoch_end(self, trainer, epoch, metrics, loss=None):
+    def on_validation_epoch_end(self, trainer, epoch, metrics, loss):
         if self._is_global_zero():
             log.info(f"Validation finished. Loss: {loss:.4f}.")
             self._log_metrics(metrics, "Validation metrics")
 
-    def on_test_epoch_end(self, trainer, epoch, metrics, loss=None):
+    def on_test_epoch_end(self, trainer, epoch, metrics, loss):
         if self._is_global_zero():
             log.info(f"Test finished. Loss: {loss:.4f}.")
             self._log_metrics(metrics, "Test metrics")

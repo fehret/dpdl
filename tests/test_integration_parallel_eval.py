@@ -173,4 +173,3 @@ def test_two_rank_checkpoint_validation_smoke(
             filename=filename,
             expected_keys={'avg_train_loss_since_last_checkpoint'},
         )
-

@@ -60,7 +60,7 @@ class _ScriptedAdapter:
         loss_value, _ = batch
         return torch.tensor(float(loss_value))
 
-    def loss_denominator(self, model, batch, forward_output):
+    def num_loss_items(self, model, batch, forward_output):
         _, weight = batch
         return int(weight)
 
@@ -155,12 +155,12 @@ def test_evaluate_test_mode_uses_test_split():
 def test_non_zero_rank_no_callbacks(monkeypatch):
     batches = [(1.0, 2), (3.0, 2)]
     trainer, metrics, recorder = _make_trainer(batches)
-    monkeypatch.setattr(trainer, '_is_global_zero', lambda: False)
+    monkeypatch.setattr('dpdl.trainer.is_global_zero', lambda: False)
 
     loss, _ = trainer._evaluate('validation', epoch=0, enable_callbacks=True)
 
     assert loss == pytest.approx((1.0 * 2 + 3.0 * 2) / 4)  # 2.0
-    
+
     assert len(trainer.adapter.processed) == 2
     assert len(metrics.updates) == 2
     assert metrics.reset_calls == 1
@@ -173,7 +173,7 @@ def test_non_zero_rank_no_callbacks(monkeypatch):
 def test_rank_zero_callbacks_and_reduced_loss(monkeypatch):
     batches = [(1.0, 2), (3.0, 2)]
     trainer, _, recorder = _make_trainer(batches)
-    monkeypatch.setattr(trainer, '_is_global_zero', lambda: True)
+    monkeypatch.setattr('dpdl.trainer.is_global_zero', lambda: True)
 
     trainer._evaluate('validation', epoch=7, enable_callbacks=True)
 
@@ -197,7 +197,7 @@ def test_rank_zero_callbacks_and_reduced_loss(monkeypatch):
 def test_disabling_callbacks(monkeypatch):
     batches = [(2.0, 1)]
     trainer, _, recorder = _make_trainer(batches)
-    monkeypatch.setattr(trainer, '_is_global_zero', lambda: True)
+    monkeypatch.setattr('dpdl.trainer.is_global_zero', lambda: True)
 
     trainer._evaluate('validation', epoch=0, enable_callbacks=False)
 
