@@ -70,7 +70,7 @@ The entry point is [run.py](run.py) (also installed as the `dpdl` CLI).
 
 ### Example usage
 
-At minimum, specify `--epochs` (or `--use-steps` with `--total-steps`).
+At minimum, specify `--epochs` (or `--total-steps`).
 
 Example with `CIFAR-10` and `ResNetV2`. Data and weights will be downloaded.
 
