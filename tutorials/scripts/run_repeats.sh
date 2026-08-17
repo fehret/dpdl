@@ -20,17 +20,16 @@ LEARNING_RATE=1e-3
 TARGET_EPSILON=8
 DEVICE="auto"
 LOG_DIR="logs/tutorial"
-NUM_RUNS=5                  # how many repeats to run
 SEEDS=(0 1 2 3 4)           # one seed per repeat; must have NUM_RUNS entries
 
 # --- run the repeats ---------------------------------------------------------
 RESULT_DIRS=()
 
-for i in $(seq 0 $((NUM_RUNS - 1))); do
+for i in "${!SEEDS[@]}"; do
     SEED="${SEEDS[$i]}"
     EXPERIMENT_NAME="eyepacs_vit_tiny_eps${TARGET_EPSILON}_seed${SEED}"
 
-    echo "=== Run $((i + 1))/${NUM_RUNS}: seed=${SEED} ==="
+    echo "=== Run $((i + 1))/${#SEEDS[@]}: seed=${SEED} ==="
 
     dpdl train \
         --dataset-name "${DATASET_NAME}" \
