@@ -8,7 +8,7 @@
 
 ## Tutorials
 
-New to DPDL? Start with [tutorial.ipynb](tutorials/tutorial.ipynb) (training a DP image classifier on a medical dataset) and then [tutorial_hpo.md](tutorials/tutorial_hpo.md) (hyperparameter optimization for that same setup).
+New to DPDL? Start with [tutorial.ipynb](tutorials/tutorial.ipynb) (training a DP image classifier on a medical dataset) and then [tutorial_hpo.ipynb](tutorials/tutorial_hpo.ipynb) (hyperparameter optimization for that same setup).
 
 ## Installation and usage
 
